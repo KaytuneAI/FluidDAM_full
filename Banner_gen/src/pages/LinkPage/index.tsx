@@ -1,0 +1,2 @@
+export { LinkPage } from "./LinkPage";
+
