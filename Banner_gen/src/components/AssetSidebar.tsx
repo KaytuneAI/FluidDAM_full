@@ -12,6 +12,7 @@ interface AssetSidebarProps {
 }
 
 interface AssetItem {
+  id: string; // 唯一标识符
   url: string;
   fieldName: string;
   name: string;
@@ -30,6 +31,7 @@ export const AssetSidebar: React.FC<AssetSidebarProps> = ({
   // 合并 JSON 数据中的素材和来自 Link 的额外素材
   const displayAssets = useMemo(() => {
     const assetMap = new Map<string, AssetItem>();
+    let assetCounter = 0; // 用于生成唯一 ID
     
     // 1. 从 JSON 数据中提取所有图片素材
     jsonData.forEach((data, index) => {
@@ -47,8 +49,11 @@ export const AssetSidebar: React.FC<AssetSidebarProps> = ({
           // 处理字符串类型的图片 URL
           if (typeof value === 'string' && value.trim()) {
             const url = value.trim();
-            if (!assetMap.has(url)) {
-              assetMap.set(url, {
+            // 使用组合 key 确保唯一性：fieldName + url + index
+            const uniqueKey = `${key}_${index}_${url.substring(0, 50)}`;
+            if (!assetMap.has(uniqueKey)) {
+              assetMap.set(uniqueKey, {
+                id: `json_${assetCounter++}`,
                 url,
                 fieldName: key,
                 name: url.split('/').pop() || url.substring(0, 30),
@@ -56,7 +61,7 @@ export const AssetSidebar: React.FC<AssetSidebarProps> = ({
               });
             } else {
               // 更新 isUsed 状态
-              const existing = assetMap.get(url)!;
+              const existing = assetMap.get(uniqueKey)!;
               if (index === currentIndex) {
                 existing.isUsed = true;
               }
@@ -64,18 +69,21 @@ export const AssetSidebar: React.FC<AssetSidebarProps> = ({
           }
           // 处理数组类型的图片 URL
           else if (Array.isArray(value)) {
-            value.forEach((item) => {
+            value.forEach((item, itemIndex) => {
               if (typeof item === 'string' && item.trim()) {
                 const url = item.trim();
-                if (!assetMap.has(url)) {
-                  assetMap.set(url, {
+                // 使用组合 key 确保唯一性
+                const uniqueKey = `${key}_${index}_${itemIndex}_${url.substring(0, 50)}`;
+                if (!assetMap.has(uniqueKey)) {
+                  assetMap.set(uniqueKey, {
+                    id: `json_${assetCounter++}`,
                     url,
                     fieldName: key,
                     name: url.split('/').pop() || url.substring(0, 30),
                     isUsed: index === currentIndex,
                   });
                 } else {
-                  const existing = assetMap.get(url)!;
+                  const existing = assetMap.get(uniqueKey)!;
                   if (index === currentIndex) {
                     existing.isUsed = true;
                   }
@@ -95,6 +103,7 @@ export const AssetSidebar: React.FC<AssetSidebarProps> = ({
       // 使用 asset.id 作为 key，避免与 JSON 数据中的素材冲突
       if (!assetMap.has(asset.id)) {
         assetMap.set(asset.id, {
+          id: asset.id,
           url: src,
           fieldName: 'link-asset',
           name: asset.name || `Link 素材 ${idx + 1}`,
@@ -141,10 +150,70 @@ export const AssetSidebar: React.FC<AssetSidebarProps> = ({
             const isHighlighted = highlightedAsset === asset.url;
             return (
               <div
-                key={asset.url}
+                key={asset.id}
                 className={`asset-card ${asset.isUsed ? 'used' : ''} ${isHighlighted ? 'highlighted' : ''}`}
                 onClick={() => handleAssetClick(asset)}
                 title={`${asset.fieldName}: ${asset.name}`}
+                draggable={true}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('text/plain', asset.url);
+                  e.dataTransfer.setData('application/asset-url', asset.url);
+                  e.dataTransfer.effectAllowed = 'copy';
+                  
+                  // 创建拖拽预览
+                  const img = new Image();
+                  img.crossOrigin = 'anonymous';
+                  img.src = asset.url;
+                  
+                  const createDragImage = () => {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    if (!ctx) return;
+                    
+                    const maxSize = 150;
+                    let drawWidth = Math.min(maxSize, img.naturalWidth || img.width || 150);
+                    let drawHeight = Math.min(maxSize, img.naturalHeight || img.height || 150);
+                    
+                    // 保持宽高比
+                    if (img.naturalWidth && img.naturalHeight) {
+                      const aspectRatio = img.naturalWidth / img.naturalHeight;
+                      if (aspectRatio > 1) {
+                        drawHeight = drawWidth / aspectRatio;
+                      } else {
+                        drawWidth = drawHeight * aspectRatio;
+                      }
+                    }
+                    
+                    canvas.width = drawWidth;
+                    canvas.height = drawHeight;
+                    ctx.drawImage(img, 0, 0, drawWidth, drawHeight);
+                    e.dataTransfer.setDragImage(canvas, drawWidth / 2, drawHeight / 2);
+                  };
+                  
+                  if (img.complete && img.naturalWidth > 0) {
+                    // 图片已加载
+                    createDragImage();
+                  } else {
+                    // 等待图片加载
+                    img.onload = createDragImage;
+                    img.onerror = () => {
+                      // 加载失败时使用默认图标
+                      const canvas = document.createElement('canvas');
+                      canvas.width = 100;
+                      canvas.height = 100;
+                      const ctx = canvas.getContext('2d');
+                      if (ctx) {
+                        ctx.fillStyle = '#f0f0f0';
+                        ctx.fillRect(0, 0, 100, 100);
+                        ctx.fillStyle = '#999';
+                        ctx.font = '12px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('图片', 50, 50);
+                        e.dataTransfer.setDragImage(canvas, 50, 50);
+                      }
+                    };
+                  }
+                }}
               >
                 <div 
                   className="asset-thumb"

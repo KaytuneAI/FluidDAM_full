@@ -196,6 +196,14 @@ export const applyJsonDataToMultiIframe = (
             const img = templateImgs[idx];
             img.src = src;
             img.style.display = "";
+            
+            // 应用该图片的 transform（如果有）
+            const transformKey = `product_main_src_transform_${idx}`;
+            const savedTransform = edits[transformKey];
+            if (savedTransform) {
+              img.style.transform = String(savedTransform);
+              img.style.transformOrigin = 'center center';
+            }
           });
 
           for (let i = imgs.length; i < templateImgs.length; i++) {
@@ -204,12 +212,21 @@ export const applyJsonDataToMultiIframe = (
           }
         } else {
           productContainer.innerHTML = "";
-          imgs.forEach((src) => {
+          imgs.forEach((src, idx) => {
             const img = iframeDoc.createElement("img");
             img.src = src;
             img.alt = "主产品";
             img.setAttribute("data-field", "product_main_src");
             img.setAttribute("data-label", "主产品图片");
+            
+            // 应用该图片的 transform（如果有）
+            const transformKey = `product_main_src_transform_${idx}`;
+            const savedTransform = edits[transformKey];
+            if (savedTransform) {
+              img.style.transform = String(savedTransform);
+              img.style.transformOrigin = 'center center';
+            }
+            
             productContainer.appendChild(img);
           });
         }
@@ -293,7 +310,17 @@ export const applyJsonDataToMultiIframe = (
         const finalValue = edits[fieldName] !== undefined ? edits[fieldName] : String(value);
         
         if (element.tagName === "IMG") {
-          (element as HTMLImageElement).src = finalValue;
+          const img = element as HTMLImageElement;
+          img.src = finalValue;
+          
+          // 如果是图片字段，检查是否有对应的 transform
+          // 对于单个图片字段，使用 fieldName_transform_0
+          const transformKey = `${fieldName}_transform_0`;
+          const savedTransform = edits[transformKey];
+          if (savedTransform) {
+            img.style.transform = String(savedTransform);
+            img.style.transformOrigin = 'center center';
+          }
         } else {
           element.textContent = finalValue;
         }
@@ -387,6 +414,14 @@ export const applyJsonDataToIframe = (
             const img = templateImgs[idx];
             img.src = src;
             img.style.display = "";
+            
+            // 应用该图片的 transform（如果有）
+            const transformKey = `product_main_src_transform_${idx}`;
+            const savedTransform = edits[transformKey];
+            if (savedTransform) {
+              img.style.transform = String(savedTransform);
+              img.style.transformOrigin = 'center center';
+            }
           });
 
           for (let i = imgs.length; i < templateImgs.length; i++) {
@@ -395,12 +430,21 @@ export const applyJsonDataToIframe = (
           }
         } else {
           productContainer.innerHTML = "";
-          imgs.forEach((src) => {
+          imgs.forEach((src, idx) => {
             const img = iframeDoc.createElement("img");
             img.src = src;
             img.alt = "主产品";
             img.setAttribute("data-field", "product_main_src");
             img.setAttribute("data-label", "主产品图片");
+            
+            // 应用该图片的 transform（如果有）
+            const transformKey = `product_main_src_transform_${idx}`;
+            const savedTransform = edits[transformKey];
+            if (savedTransform) {
+              img.style.transform = String(savedTransform);
+              img.style.transformOrigin = 'center center';
+            }
+            
             productContainer.appendChild(img);
           });
         }
@@ -484,7 +528,17 @@ export const applyJsonDataToIframe = (
         const finalValue = edits[fieldName] !== undefined ? edits[fieldName] : String(value);
         
         if (element.tagName === "IMG") {
-          (element as HTMLImageElement).src = finalValue;
+          const img = element as HTMLImageElement;
+          img.src = finalValue;
+          
+          // 如果是图片字段，检查是否有对应的 transform
+          // 对于单个图片字段，使用 fieldName_transform_0
+          const transformKey = `${fieldName}_transform_0`;
+          const savedTransform = edits[transformKey];
+          if (savedTransform) {
+            img.style.transform = String(savedTransform);
+            img.style.transformOrigin = 'center center';
+          }
         } else {
           element.textContent = finalValue;
         }
@@ -502,7 +556,32 @@ export const applyJsonDataToIframe = (
         if (element) {
           if (Array.isArray(value)) return;
           
-          if (element.tagName === "IMG") {
+          // 处理 transform 字段（格式：fieldName_transform 或 fieldName_transform_index）
+          if (fieldName.endsWith('_transform')) {
+            // 检查是否是带索引的 transform（fieldName_transform_0, fieldName_transform_1 等）
+            const transformMatch = fieldName.match(/^(.+)_transform_(\d+)$/);
+            if (transformMatch) {
+              // 带索引的 transform，只应用到对应索引的图片
+              const originalFieldName = transformMatch[1];
+              const imgIndex = parseInt(transformMatch[2], 10);
+              const allElements = Array.from(iframeDoc.querySelectorAll(`[data-field="${originalFieldName}"]`)) as HTMLImageElement[];
+              const imgElements = allElements.filter(el => el.tagName === "IMG");
+              if (imgElements[imgIndex]) {
+                imgElements[imgIndex].style.transform = String(value);
+                imgElements[imgIndex].style.transformOrigin = 'center center';
+              }
+            } else {
+              // 不带索引的 transform，应用到所有相同字段的图片（向后兼容）
+              const originalFieldName = fieldName.replace(/_transform$/, '');
+              const allElements = Array.from(iframeDoc.querySelectorAll(`[data-field="${originalFieldName}"]`)) as HTMLImageElement[];
+              allElements.forEach(el => {
+                if (el.tagName === "IMG") {
+                  el.style.transform = String(value);
+                  el.style.transformOrigin = 'center center';
+                }
+              });
+            }
+          } else if (element.tagName === "IMG") {
             (element as HTMLImageElement).src = String(value);
           } else {
             element.textContent = String(value);

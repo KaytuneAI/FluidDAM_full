@@ -22,6 +22,11 @@ import {
   SessionBusKeys,
   type LinkToBannerGenPayload,
 } from "@shared/utils/sessionBus";
+import {
+  saveBannerGenData,
+  loadBannerGenData,
+  clearBannerGenData,
+} from "../../utils/persistence";
 import "./BannerBatchPage.css";
 
 export const BannerBatchPage: React.FC = () => {
@@ -100,7 +105,54 @@ export const BannerBatchPage: React.FC = () => {
     jsonDataRef.current = jsonData;
   }, [jsonData]);
 
-  // 初始化时读取来自 Link 的素材
+  // 初始化时从 localStorage 恢复数据
+  useEffect(() => {
+    const saved = loadBannerGenData();
+    if (saved) {
+      console.log('[persistence] 恢复保存的数据');
+      let restoredCount = 0;
+      
+      // 恢复 ZIP 文件相关
+      if (saved.htmlContent) {
+        setHtmlContent(saved.htmlContent);
+        setHtmlFileName(saved.htmlFileName || '');
+        restoredCount++;
+      }
+      if (saved.cssContent) {
+        setCssContent(saved.cssContent);
+        setCssFileName(saved.cssFileName || '');
+        restoredCount++;
+      }
+      if (saved.templateFields && saved.templateFields.length > 0) {
+        setTemplateFields(saved.templateFields);
+      }
+      
+      // 恢复 JSON 数据
+      if (saved.jsonData && saved.jsonData.length > 0) {
+        setJsonData(saved.jsonData);
+        setCurrentIndex(saved.currentIndex || 0);
+        restoredCount++;
+      }
+      
+      // 恢复编辑的值
+      if (saved.editedValues && Object.keys(saved.editedValues).length > 0) {
+        setEditedValues(saved.editedValues);
+        restoredCount++;
+      }
+      
+      // 恢复来自 Link 的素材（如果 sessionStorage 中没有新数据）
+      if (saved.linkedAssets && saved.linkedAssets.length > 0) {
+        setLinkedAssets(saved.linkedAssets);
+        restoredCount++;
+      }
+      
+      if (restoredCount > 0) {
+        setSuccess(`已恢复 ${restoredCount} 项保存的数据`);
+      }
+    }
+  }, []);
+
+  // 初始化时读取来自 Link 的素材（优先使用 sessionStorage 中的新数据）
   useEffect(() => {
     const payload = readSessionPayload<LinkToBannerGenPayload>(
       SessionBusKeys.LINK_TO_BANNERGEN,
@@ -247,6 +299,7 @@ export const BannerBatchPage: React.FC = () => {
     setSelectedField(null); // 清除选中字段
     setSelectedFieldValue("");
     setTemplateAssets(null); // 清除统一模板状态
+    clearBannerGenData(); // 清除保存的数据
     setSuccess("已清除 HTML 模板");
   };
 
@@ -275,9 +328,12 @@ export const BannerBatchPage: React.FC = () => {
         fileName: file.name,
       });
       
-      // ✅ 清除旧的 JSON 数据，避免新模板使用旧数据
+      // ✅ 如果 ZIP 中有 JSON 数据，将模板的 data-field 值填充到第一个 JSON 数据项
       if (result.jsonData.length > 0) {
-        setJsonData(result.jsonData);
+        const { extractTemplateDataFields, populateTemplateDataToJson } = await import('./templateExtractor');
+        const templateData = extractTemplateDataFields(result.html);
+        const finalJsonData = populateTemplateDataToJson(result.jsonData, templateData);
+        setJsonData(finalJsonData);
         setCurrentIndex(0);
         setSelectedBannerIndex(isMultiView ? 0 : null);
       } else {
@@ -974,10 +1030,14 @@ export const BannerBatchPage: React.FC = () => {
             const element = iframeDoc.querySelector(`[data-field="${fieldName}"]`) as HTMLElement;
             if (element) {
               if (element.tagName === "IMG") {
-                setSelectedFieldValue((element as HTMLImageElement).src || "");
+                // 对于图片字段，直接使用新值，避免从 iframe 读取时图片还未加载完成
+                setSelectedFieldValue(newValue);
               } else {
                 setSelectedFieldValue(element.textContent?.trim() || "");
               }
+            } else {
+              // 如果元素不存在，也直接使用新值
+              setSelectedFieldValue(newValue);
             }
           }
         }
@@ -1009,11 +1069,406 @@ export const BannerBatchPage: React.FC = () => {
     }));
   }, [isMultiView, currentIndex, getActiveIndex, updateFieldInDocument, selectedBannerIndex, clearAllFieldHighlights]);
 
+  // 调整图片位置和缩放
+  const adjustImageTransform = useCallback((fieldName: string, direction: 'up' | 'down' | 'left' | 'right' | 'zoomIn' | 'zoomOut') => {
+    const activeIndex = getActiveIndex();
+    let targetIframe: HTMLIFrameElement | null = null;
+    
+    // 多图模式：找到对应的 iframe
+    if (isMultiView) {
+      const offset = activeIndex - currentIndex;
+      if (offset >= 0 && offset < 4) {
+        targetIframe = multiIframeRefs.current[offset];
+      }
+    }
+    
+    // 单图模式或找不到对应 iframe：使用预览 iframe
+    if (!targetIframe) {
+      targetIframe = previewIframeRef.current;
+    }
+    
+    if (!targetIframe) return;
+    
+    try {
+      const iframeDoc = targetIframe.contentDocument || targetIframe.contentWindow?.document;
+      if (!iframeDoc) return;
+      
+      // 找到所有具有相同 data-field 的图片（支持 x2、x3 等多图片情况）
+      const elements = Array.from(iframeDoc.querySelectorAll(`[data-field="${fieldName}"]`)) as HTMLImageElement[];
+      const imgs = elements.filter(el => el.tagName === 'IMG');
+      
+      if (imgs.length === 0) return;
+      
+      // 获取图片的父容器尺寸（用于计算百分比，使用第一个图片）
+      const firstImg = imgs[0];
+      const parent = firstImg.parentElement;
+      const parentWidth = parent?.offsetWidth || firstImg.offsetWidth || 750;
+      const parentHeight = parent?.offsetHeight || firstImg.offsetHeight || 1125;
+      
+      // 计算移动步长（5%）
+      const stepX = parentWidth * 0.05;
+      const stepY = parentHeight * 0.05;
+      const scaleStep = 0.05;
+      
+      // 对每个图片单独应用变化，保持各自的 transform
+      imgs.forEach((img, imgIndex) => {
+        // 获取当前图片的 transform 值
+        let currentTransform = img.style.transform || '';
+        let translateX = 0;
+        let translateY = 0;
+        let scale = 1;
+        
+        // 解析当前的 transform
+        if (currentTransform) {
+          const translateMatch = currentTransform.match(/translate\(([-\d.]+)px,\s*([-\d.]+)px\)/);
+          if (translateMatch) {
+            translateX = parseFloat(translateMatch[1]) || 0;
+            translateY = parseFloat(translateMatch[2]) || 0;
+          }
+          const scaleMatch = currentTransform.match(/scale\(([\d.]+)\)/);
+          if (scaleMatch) {
+            scale = parseFloat(scaleMatch[1]) || 1;
+          }
+        }
+        
+        // 如果没有 transform，尝试从 editedValues 读取（使用索引）
+        if (translateX === 0 && translateY === 0 && scale === 1) {
+          const transformKey = `${fieldName}_transform_${imgIndex}`;
+          const savedTransform = editedValues[activeIndex]?.[transformKey];
+          if (savedTransform) {
+            const translateMatch = savedTransform.match(/translate\(([-\d.]+)px,\s*([-\d.]+)px\)/);
+            if (translateMatch) {
+              translateX = parseFloat(translateMatch[1]) || 0;
+              translateY = parseFloat(translateMatch[2]) || 0;
+            }
+            const scaleMatch = savedTransform.match(/scale\(([\d.]+)\)/);
+            if (scaleMatch) {
+              scale = parseFloat(scaleMatch[1]) || 1;
+            }
+          }
+        }
+        
+        // 根据方向调整
+        switch (direction) {
+          case 'up':
+            translateY -= stepY;
+            break;
+          case 'down':
+            translateY += stepY;
+            break;
+          case 'left':
+            translateX -= stepX;
+            break;
+          case 'right':
+            translateX += stepX;
+            break;
+          case 'zoomIn':
+            scale = Math.min(scale + scaleStep, 3); // 最大3倍
+            break;
+          case 'zoomOut':
+            scale = Math.max(scale - scaleStep, 0.1); // 最小0.1倍
+            break;
+        }
+        
+        const newTransform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+        
+        // 应用新的 transform 到当前图片
+        img.style.transform = newTransform;
+        img.style.transformOrigin = 'center center';
+        
+        // 同时更新导出 iframe 中对应索引的图片
+        if (iframeRef.current) {
+          try {
+            const exportDoc = iframeRef.current.contentDocument || iframeRef.current.contentWindow?.document;
+            if (exportDoc) {
+              const exportElements = Array.from(exportDoc.querySelectorAll(`[data-field="${fieldName}"]`)) as HTMLImageElement[];
+              const exportImgs = exportElements.filter(el => el.tagName === 'IMG');
+              if (exportImgs[imgIndex]) {
+                exportImgs[imgIndex].style.transform = newTransform;
+                exportImgs[imgIndex].style.transformOrigin = 'center center';
+              }
+            }
+          } catch (e) {
+            console.warn('无法更新导出 iframe:', e);
+          }
+        }
+        
+        // 保存变换值到 editedValues（使用索引区分不同的图片）
+        const transformKey = `${fieldName}_transform_${imgIndex}`;
+        setEditedValues(prev => ({
+          ...prev,
+          [activeIndex]: {
+            ...prev[activeIndex],
+            [transformKey]: newTransform,
+          }
+        }));
+      });
+      
+    } catch (e) {
+      console.warn('调整图片变换失败:', e);
+    }
+  }, [isMultiView, currentIndex, getActiveIndex, multiIframeRefs, previewIframeRef, iframeRef]);
+
+  // 为选中的图片字段添加拖拽和缩放功能
+  useEffect(() => {
+    if (!selectedField) return;
+    
+    const isImageField = selectedField.includes("_src") || selectedField.includes("image") || selectedField.includes("img");
+    if (!isImageField) return;
+
+    // 获取所有需要设置事件监听器的 iframe
+    const iframesToSetup: HTMLIFrameElement[] = [];
+    
+    if (isMultiView) {
+      // 多图模式：为所有可见的 iframe 设置
+      multiIframeRefs.current.forEach(iframe => {
+        if (iframe) iframesToSetup.push(iframe);
+      });
+    } else {
+      // 单图模式：只设置预览 iframe
+      if (previewIframeRef.current) {
+        iframesToSetup.push(previewIframeRef.current);
+      }
+    }
+    
+    if (iframesToSetup.length === 0) return;
+
+    const setupDragAndZoom = (targetIframe: HTMLIFrameElement, iframeIndex: number) => {
+      try {
+        const iframeDoc = targetIframe?.contentDocument || targetIframe?.contentWindow?.document;
+        if (!iframeDoc) return () => {}; // 返回空清理函数
+        
+        // 计算当前 iframe 对应的数据索引
+        const dataIndex = isMultiView ? (currentIndex + iframeIndex) : getActiveIndex();
+
+        // 找到所有具有相同 data-field 的图片
+        const imgs = Array.from(iframeDoc.querySelectorAll(`[data-field="${selectedField}"]`)) as HTMLImageElement[];
+        const imageElements = imgs.filter(el => el.tagName === 'IMG');
+        
+        if (imageElements.length === 0) return () => {}; // 返回空清理函数
+
+        let isDragging = false;
+        let draggedImg: HTMLImageElement | null = null;
+        let draggedImgIndex = -1;
+        let startX = 0;
+        let startY = 0;
+        let startTranslateX = 0;
+        let startTranslateY = 0;
+        let currentScale = 1;
+
+        const parseTransform = (transform: string) => {
+          let tx = 0, ty = 0, s = 1;
+          const translateMatch = transform.match(/translate\(([-\d.]+)px,\s*([-\d.]+)px\)/);
+          if (translateMatch) {
+            tx = parseFloat(translateMatch[1]) || 0;
+            ty = parseFloat(translateMatch[2]) || 0;
+          }
+          const scaleMatch = transform.match(/scale\(([\d.]+)\)/);
+          if (scaleMatch) {
+            s = parseFloat(scaleMatch[1]) || 1;
+          }
+          return { tx, ty, s };
+        };
+
+        // 获取图片在数组中的索引（通过 src 或位置）
+        const getImageIndex = (img: HTMLImageElement): number => {
+          return imageElements.indexOf(img);
+        };
+
+        const applyTransform = (img: HTMLImageElement, tx: number, ty: number, s: number) => {
+          const transform = `translate(${tx}px, ${ty}px) scale(${s})`;
+          img.style.transform = transform;
+          img.style.transformOrigin = 'center center';
+          img.style.cursor = 'move';
+
+          // 同时更新导出 iframe 中对应索引的图片
+          if (iframeRef.current) {
+            try {
+              const exportDoc = iframeRef.current.contentDocument || iframeRef.current.contentWindow?.document;
+              if (exportDoc) {
+                const exportImgs = Array.from(exportDoc.querySelectorAll(`[data-field="${selectedField}"]`)) as HTMLImageElement[];
+                const exportImgElements = exportImgs.filter(el => el.tagName === 'IMG');
+                const imgIndex = getImageIndex(img);
+                if (exportImgElements[imgIndex]) {
+                  exportImgElements[imgIndex].style.transform = transform;
+                  exportImgElements[imgIndex].style.transformOrigin = 'center center';
+                }
+              }
+            } catch (e) {
+              console.warn('无法更新导出 iframe:', e);
+            }
+          }
+
+          // 保存到 editedValues（使用索引区分不同的图片）
+          const imgIndex = getImageIndex(img);
+          const transformKey = `${selectedField}_transform_${imgIndex}`;
+          setEditedValues(prev => ({
+            ...prev,
+            [dataIndex]: {
+              ...prev[dataIndex],
+              [transformKey]: transform,
+            }
+          }));
+        };
+
+        const handleMouseDown = (e: MouseEvent) => {
+          if (e.button !== 0) return; // 只处理左键
+          const target = e.target as HTMLElement;
+          if (!target || target.tagName !== 'IMG' || !target.hasAttribute(`data-field`) || target.getAttribute('data-field') !== selectedField) {
+            return;
+          }
+
+          isDragging = true;
+          draggedImg = target as HTMLImageElement;
+          draggedImgIndex = getImageIndex(draggedImg);
+          startX = e.clientX;
+          startY = e.clientY;
+
+          const currentTransform = draggedImg.style.transform || '';
+          const parsed = parseTransform(currentTransform);
+          startTranslateX = parsed.tx;
+          startTranslateY = parsed.ty;
+          currentScale = parsed.s;
+
+          e.preventDefault();
+          e.stopPropagation();
+        };
+
+        const handleMouseMove = (e: MouseEvent) => {
+          if (!isDragging || !draggedImg) return;
+
+          const deltaX = e.clientX - startX;
+          const deltaY = e.clientY - startY;
+
+          // 计算新的位置（需要考虑 iframe 的缩放）
+          const iframeRect = targetIframe?.getBoundingClientRect();
+          const scaleX = iframeRect ? (iframeRect.width / (iframeSize?.width || 750)) : 1;
+          const scaleY = iframeRect ? (iframeRect.height / (iframeSize?.height || 1125)) : 1;
+
+          const newTx = startTranslateX + (deltaX / scaleX);
+          const newTy = startTranslateY + (deltaY / scaleY);
+
+          // 只对当前拖拽的图片应用 transform
+          applyTransform(draggedImg, newTx, newTy, currentScale);
+          e.preventDefault();
+        };
+
+        const handleMouseUp = () => {
+          isDragging = false;
+          draggedImg = null;
+          draggedImgIndex = -1;
+        };
+
+        const handleWheel = (e: WheelEvent) => {
+          const target = e.target as HTMLElement;
+          if (!target || target.tagName !== 'IMG' || !target.hasAttribute(`data-field`) || target.getAttribute('data-field') !== selectedField) {
+            return;
+          }
+
+          e.preventDefault();
+          e.stopPropagation();
+
+          const img = target as HTMLImageElement;
+          const currentTransform = img.style.transform || '';
+          const parsed = parseTransform(currentTransform);
+          
+          const scaleStep = 0.05;
+          const delta = e.deltaY > 0 ? -scaleStep : scaleStep;
+          const newScale = Math.max(0.1, Math.min(3, parsed.s + delta));
+
+          // 只对当前滚轮的图片应用缩放
+          applyTransform(img, parsed.tx, parsed.ty, newScale);
+        };
+
+        // 添加事件监听器
+        const mouseEnterHandlers: Map<HTMLImageElement, (e: MouseEvent) => void> = new Map();
+        const mouseLeaveHandlers: Map<HTMLImageElement, (e: MouseEvent) => void> = new Map();
+        
+        imageElements.forEach(img => {
+          img.addEventListener('mousedown', handleMouseDown);
+          img.style.userSelect = 'none';
+          
+          // 鼠标移动到图片上时显示 move 光标
+          const enterHandler = (e: MouseEvent) => {
+            (e.target as HTMLElement).style.cursor = 'move';
+          };
+          img.addEventListener('mouseenter', enterHandler);
+          mouseEnterHandlers.set(img, enterHandler);
+          
+          // 鼠标离开图片时恢复默认光标
+          const leaveHandler = (e: MouseEvent) => {
+            if (!isDragging) {
+              (e.target as HTMLElement).style.cursor = '';
+            }
+          };
+          img.addEventListener('mouseleave', leaveHandler);
+          mouseLeaveHandlers.set(img, leaveHandler);
+          
+          // 滚轮缩放只在图片上生效
+          img.addEventListener('wheel', handleWheel, { passive: false });
+        });
+
+        // 全局鼠标移动和抬起事件，用于拖拽
+        iframeDoc.addEventListener('mousemove', handleMouseMove);
+        iframeDoc.addEventListener('mouseup', handleMouseUp);
+
+        // 清理函数
+        return () => {
+          imageElements.forEach(img => {
+            img.removeEventListener('mousedown', handleMouseDown);
+            img.style.cursor = '';
+            img.style.userSelect = '';
+            
+            // 移除鼠标进入和离开事件
+            const enterHandler = mouseEnterHandlers.get(img);
+            const leaveHandler = mouseLeaveHandlers.get(img);
+            if (enterHandler) {
+              img.removeEventListener('mouseenter', enterHandler);
+            }
+            if (leaveHandler) {
+              img.removeEventListener('mouseleave', leaveHandler);
+            }
+            
+            img.removeEventListener('wheel', handleWheel);
+          });
+          mouseEnterHandlers.clear();
+          mouseLeaveHandlers.clear();
+          iframeDoc.removeEventListener('mousemove', handleMouseMove);
+          iframeDoc.removeEventListener('mouseup', handleMouseUp);
+        };
+      } catch (e) {
+        console.warn('设置拖拽缩放失败:', e);
+        return () => {};
+      }
+    };
+
+    // 为所有 iframe 设置事件监听器
+    const cleanupFunctions: (() => void)[] = [];
+    
+    iframesToSetup.forEach((iframe, idx) => {
+      const timer = setTimeout(() => {
+        const cleanup = setupDragAndZoom(iframe, idx);
+        cleanupFunctions.push(cleanup);
+      }, 100);
+      cleanupFunctions.push(() => clearTimeout(timer));
+    });
+
+    // 清理函数
+    return () => {
+      cleanupFunctions.forEach(cleanup => {
+        if (typeof cleanup === 'function') {
+          cleanup();
+        }
+      });
+    };
+  }, [selectedField, currentIndex, isMultiView, getActiveIndex, multiIframeRefs, previewIframeRef, iframeRef, iframeSize, setEditedValues]);
+
   // 清除 CSS
   const handleClearCss = () => {
     setCssContent("");
     setCssFileName("");
     setSuccess("已清除 CSS 样式");
+    // 注意：这里不清除整个持久化数据，只清除 CSS
   };
 
   // JSON 文件上传处理
@@ -1026,13 +1481,22 @@ export const BannerBatchPage: React.FC = () => {
 
     try {
       const parsed = await parseJsonFile(file);
-      setJsonData(parsed);
+      
+      // 如果已有模板，将模板的 data-field 值填充到第一个 JSON 数据项
+      let finalJsonData = parsed;
+      if (htmlContent) {
+        const { extractTemplateDataFields, populateTemplateDataToJson } = await import('./templateExtractor');
+        const templateData = extractTemplateDataFields(htmlContent);
+        finalJsonData = populateTemplateDataToJson(parsed, templateData);
+      }
+      
+      setJsonData(finalJsonData);
       setCurrentIndex(0);
       setSelectedBannerIndex(isMultiView ? 0 : null);
-      setSuccess(`成功加载 ${parsed.length} 条数据`);
+      setSuccess(`成功加载 ${finalJsonData.length} 条数据`);
       // 应用第一条数据到预览
-      if (parsed.length > 0) {
-        applyJsonDataToIframe(parsed[0], 0);
+      if (finalJsonData.length > 0) {
+        applyJsonDataToIframe(finalJsonData[0], 0);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "JSON 解析失败";
@@ -1094,9 +1558,12 @@ export const BannerBatchPage: React.FC = () => {
   useEffect(() => {
     if (!isMultiView && jsonData.length > 0 && currentIndex >= 0 && currentIndex < jsonData.length) {
       const timer = setTimeout(() => {
-        // 如果是第一个索引（索引0），且是空对象，重置 iframe 到原始 HTML 内容
-        if (currentIndex === 0 && Object.keys(jsonData[currentIndex]).length === 0) {
-          // 重新设置预览和导出 iframe 的 srcdoc，重置到原始 HTML
+        // 如果是第一个索引（索引0），且是空对象，且没有编辑的值，重置 iframe 到原始 HTML
+        const isEmptyTemplate = currentIndex === 0 && Object.keys(jsonData[currentIndex]).length === 0;
+        const hasEdits = editedValues[0] && Object.keys(editedValues[0]).length > 0;
+        
+        if (isEmptyTemplate && !hasEdits) {
+          // 空模板且没有编辑，重置到原始 HTML
           if (htmlContent) {
             const srcDoc = buildSrcDoc(htmlContent, cssContent);
             
@@ -1111,13 +1578,57 @@ export const BannerBatchPage: React.FC = () => {
             }
           }
         } else {
-          // 对于其他索引，正常应用 JSON 数据
+          // 对于其他情况（包括有编辑值的空模板），正常应用 JSON 数据（会自动合并 editedValues）
           applyJsonDataToIframe(jsonData[currentIndex], currentIndex);
         }
       }, 100);
       return () => clearTimeout(timer);
     }
   }, [jsonData, currentIndex, applyJsonDataToIframe, editedValues, htmlContent, cssContent, isMultiView]);
+
+  // 自动保存数据到 localStorage（防抖）
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      // 只在有实际数据时才保存
+      if (htmlContent || cssContent || jsonData.length > 0 || Object.keys(editedValues).length > 0 || linkedAssets.length > 0) {
+        saveBannerGenData({
+          htmlContent,
+          cssContent,
+          htmlFileName,
+          cssFileName,
+          templateFields,
+          jsonData,
+          currentIndex,
+          editedValues,
+          linkedAssets,
+        });
+      }
+    }, 1000); // 防抖：1秒后保存
+
+    return () => clearTimeout(timer);
+  }, [htmlContent, cssContent, htmlFileName, cssFileName, templateFields, jsonData, currentIndex, editedValues, linkedAssets]);
+
+  // 自动保存数据到 localStorage（防抖）
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      // 只在有实际数据时才保存
+      if (htmlContent || cssContent || jsonData.length > 0 || Object.keys(editedValues).length > 0 || linkedAssets.length > 0) {
+        saveBannerGenData({
+          htmlContent,
+          cssContent,
+          htmlFileName,
+          cssFileName,
+          templateFields,
+          jsonData,
+          currentIndex,
+          editedValues,
+          linkedAssets,
+        });
+      }
+    }, 1000); // 防抖：1秒后保存
+
+    return () => clearTimeout(timer);
+  }, [htmlContent, cssContent, htmlFileName, cssFileName, templateFields, jsonData, currentIndex, editedValues, linkedAssets]);
 
   // 切换到上一条
   const handlePrev = () => {
@@ -1246,96 +1757,22 @@ export const BannerBatchPage: React.FC = () => {
       const minute = String(now.getMinutes()).padStart(2, '0');
       const timestamp = `${year}${month}${day}${hour}${minute}`;
 
-      // 1. 首先生成HTML模板（纯模板，不应用JSON数据）
-      // 检查第一个是否是空对象（纯模板）
-      const hasTemplateAsFirst = jsonData.length > 0 && Object.keys(jsonData[0]).length === 0;
-      
-      // 如果第一个不是空对象，或者没有JSON数据，需要生成模板
-      if (!hasTemplateAsFirst || jsonData.length === 0) {
-        // 重置导出 iframe 到原始 HTML 内容（不应用JSON数据）
+      // 现在所有数据都在 JSON 中，第一个 JSON 数据项就是模板数据
+      // 直接循环所有 JSON 数据项，包括第一个（模板）
+      for (let i = 0; i < jsonData.length; i++) {
+        
+        bannerIndex++; // 文件序号从1开始
+        setCurrentIndex(i);
+        
+        // 第一个数据项是模板，使用特殊文件名
+        const isTemplate = i === 0;
+        
+        // 每次循环前，重置 iframe 到原始 HTML 状态，确保每次导出都是干净的状态
         if (iframeRef.current && htmlContent) {
           iframeRef.current.srcdoc = buildSrcDoc(htmlContent, cssContent);
+          // 等待 iframe 重置完成
+          await new Promise((resolve) => setTimeout(resolve, 200));
         }
-        
-        // 等待 iframe 加载完成
-        await new Promise((resolve) => setTimeout(resolve, 500));
-
-        const iframe = iframeRef.current;
-        if (iframe) {
-          const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-          if (iframeDoc) {
-            // 等待字体加载完成
-            await waitForIframeFonts(iframeDoc);
-            
-            // 清除所有 highlight，确保导出的图片没有高亮印记
-            clearExportIframeHighlights();
-            
-            const container = iframeDoc.querySelector('.container') as HTMLElement;
-            const exportElement = container || iframeDoc.body;
-            if (exportElement) {
-              try {
-                const dataUrl = await exportNodeToPngDataUrl(exportElement, { fontEmbedCSS: cssContent });
-                const response = await fetch(dataUrl);
-                const blob = await response.blob();
-                
-                // 第一个文件命名为 template_时间戳.png
-                const fileName = `template_${timestamp}.png`;
-                zip.file(fileName, blob);
-                successCount++;
-                bannerIndex++;
-              } catch (err) {
-                console.error(`导出模板失败:`, err);
-              }
-            }
-          }
-        }
-      } else {
-        // 第一个是空对象，使用当前iframe状态（已经是纯模板）
-        setCurrentIndex(0);
-        
-        // 等待 iframe 加载完成（如果还没加载）
-        await new Promise((resolve) => setTimeout(resolve, 500));
-
-        const iframe = iframeRef.current;
-        if (iframe) {
-          const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-          if (iframeDoc) {
-            // 等待字体加载完成
-            await waitForIframeFonts(iframeDoc);
-            
-            // 清除所有 highlight，确保导出的图片没有高亮印记
-            clearExportIframeHighlights();
-            
-            const container = iframeDoc.querySelector('.container') as HTMLElement;
-            const exportElement = container || iframeDoc.body;
-            if (exportElement) {
-              try {
-                const dataUrl = await exportNodeToPngDataUrl(exportElement, { fontEmbedCSS: cssContent });
-                const response = await fetch(dataUrl);
-                const blob = await response.blob();
-                
-                // 第一个文件命名为 template_时间戳.png
-                const fileName = `template_${timestamp}.png`;
-                zip.file(fileName, blob);
-                successCount++;
-                bannerIndex++;
-              } catch (err) {
-                console.error(`导出模板失败:`, err);
-              }
-            }
-          }
-        }
-      }
-
-      // 2. 然后生成所有JSON数据项
-      for (let i = 0; i < jsonData.length; i++) {
-        // 跳过第一个空对象（已经在上面处理了）
-        if (i === 0 && Object.keys(jsonData[i]).length === 0) {
-          continue;
-        }
-        
-        bannerIndex++; // 实际生成的文件序号从1开始（模板已占第1个）
-        setCurrentIndex(i);
         
         // 应用数据（包括编辑的值）
         applyJsonDataToIframe(jsonData[i], i);
@@ -1348,6 +1785,37 @@ export const BannerBatchPage: React.FC = () => {
 
         const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
         if (!iframeDoc) continue;
+        
+        // 确保 transform 被应用（图片加载可能需要时间）
+        const edits = editedValues[i] || {};
+        Object.entries(edits).forEach(([fieldName, value]) => {
+          if (fieldName.endsWith('_transform')) {
+            const transformMatch = fieldName.match(/^(.+)_transform_(\d+)$/);
+            if (transformMatch) {
+              const originalFieldName = transformMatch[1];
+              const imgIndex = parseInt(transformMatch[2], 10);
+              const allElements = Array.from(iframeDoc.querySelectorAll(`[data-field="${originalFieldName}"]`)) as HTMLImageElement[];
+              const imgElements = allElements.filter(el => el.tagName === "IMG");
+              if (imgElements[imgIndex]) {
+                imgElements[imgIndex].style.transform = String(value);
+                imgElements[imgIndex].style.transformOrigin = 'center center';
+              }
+            } else {
+              // 不带索引的 transform
+              const originalFieldName = fieldName.replace(/_transform$/, '');
+              const allElements = Array.from(iframeDoc.querySelectorAll(`[data-field="${originalFieldName}"]`)) as HTMLImageElement[];
+              allElements.forEach(el => {
+                if (el.tagName === "IMG") {
+                  el.style.transform = String(value);
+                  el.style.transformOrigin = 'center center';
+                }
+              });
+            }
+          }
+        });
+        
+        // 再等待一下，确保 transform 已应用
+        await new Promise((resolve) => setTimeout(resolve, 100));
 
         // 等待字体加载完成
         await waitForIframeFonts(iframeDoc);
@@ -1362,10 +1830,13 @@ export const BannerBatchPage: React.FC = () => {
 
         const row = jsonData[i];
         
-        // 如果有 id，使用 id_时间戳，否则使用 banner_序号_时间戳（序号从1开始）
-        const fileName = row.id 
-          ? `${row.id}_${timestamp}.png`
-          : `banner_${bannerIndex}_${timestamp}.png`;
+        // 第一个数据项是模板，使用 template_时间戳.png
+        // 其他数据项：如果有 id，使用 id_时间戳，否则使用 banner_序号_时间戳
+        const fileName = isTemplate
+          ? `template_${timestamp}.png`
+          : (row.id 
+              ? `${row.id}_${timestamp}.png`
+              : `banner_${bannerIndex}_${timestamp}.png`);
 
         try {
           // 导出为 Data URL
@@ -1396,11 +1867,9 @@ export const BannerBatchPage: React.FC = () => {
         document.body.removeChild(a);
         URL.revokeObjectURL(a.href);
 
-        // 计算实际生成的数量：1个模板 + JSON数据数量
-        const templateCount = 1; // 总是生成1个模板
-        const dataCount = jsonData.length > 0 && Object.keys(jsonData[0]).length === 0 
-          ? jsonData.length - 1  // 如果第一个是空对象，减去1
-          : jsonData.length;      // 否则使用全部数量
+        // 计算实际生成的数量：第一个是模板，其余是数据项
+        const templateCount = 1; // 第一个数据项是模板
+        const dataCount = Math.max(0, jsonData.length - 1); // 其余是数据项
         setSuccess(`成功生成 ${successCount} 张 Banner（${templateCount} 个模板 + ${dataCount} 个数据项），已打包为 ZIP 文件`);
 
         // ✅ 生成完成后，把 currentIndex 复位，避免 2×2 预览全部指到最后一张
@@ -1888,21 +2357,117 @@ export const BannerBatchPage: React.FC = () => {
                       </div>
                       {isSelected && (
                         <div className="template-field-editor">
-                          <div className="field-value-label">当前值：</div>
+                          {!isImageField && <div className="field-value-label">当前值：</div>}
                           {isImageField ? (
-                            <input
-                              type="text"
-                              className="field-value-input"
-                              value="只能通过Json文件修改"
-                              disabled
-                              readOnly
-                              style={{ 
-                                backgroundColor: '#f5f5f5', 
-                                color: '#999',
-                                cursor: 'not-allowed'
-                              }}
-                              onClick={(e) => e.stopPropagation()}
-                            />
+                            <>
+                              <div 
+                                className="image-drop-zone"
+                                onDragOver={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  e.currentTarget.classList.add('drag-over');
+                                }}
+                                onDragLeave={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  e.currentTarget.classList.remove('drag-over');
+                                }}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  e.currentTarget.classList.remove('drag-over');
+                                  
+                                  // 获取拖拽的素材 URL
+                                  const assetUrl = e.dataTransfer.getData('text/plain') || 
+                                                  e.dataTransfer.getData('application/asset-url');
+                                  
+                                  if (assetUrl) {
+                                    // 直接更新字段值
+                                    updateFieldValue(f.name, assetUrl);
+                                    // 立即更新显示值，避免从 iframe 读取时图片还未加载完成
+                                    setSelectedFieldValue(assetUrl);
+                                    setSuccess(`已替换 ${f.label || f.name} 的素材`);
+                                  }
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <div className="drop-zone-content">
+                                  <div className="drop-zone-icon">📎</div>
+                                  <div className="drop-zone-text">从右侧素材库拖拽素材到这里替换</div>
+                                </div>
+                              </div>
+                              {/* 控制按钮 - 放在拖拽区域下方 */}
+                              <div className="image-control-buttons" onClick={(e) => e.stopPropagation()}>
+                                {/* 方向键 - WASD 方式排列，靠左 */}
+                                <div className="dpad-container">
+                                  <button
+                                    className="image-control-btn dpad-btn dpad-up"
+                                    title="向上 (W)"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      adjustImageTransform(f.name, 'up');
+                                    }}
+                                  >
+                                    ↑
+                                  </button>
+                                  <div className="dpad-middle">
+                                    <button
+                                      className="image-control-btn dpad-btn dpad-left"
+                                      title="向左 (A)"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        adjustImageTransform(f.name, 'left');
+                                      }}
+                                    >
+                                      ←
+                                    </button>
+                                    <button
+                                      className="image-control-btn dpad-btn dpad-down"
+                                      title="向下 (S)"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        adjustImageTransform(f.name, 'down');
+                                      }}
+                                    >
+                                      ↓
+                                    </button>
+                                    <button
+                                      className="image-control-btn dpad-btn dpad-right"
+                                      title="向右 (D)"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        adjustImageTransform(f.name, 'right');
+                                      }}
+                                    >
+                                      →
+                                    </button>
+                                  </div>
+                                </div>
+                                {/* 缩放按钮 - 靠右，上面+，下面- */}
+                                <div className="zoom-container">
+                                  <button
+                                    className="image-control-btn zoom-btn zoom-in"
+                                    title="放大"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      adjustImageTransform(f.name, 'zoomIn');
+                                    }}
+                                  >
+                                    +
+                                  </button>
+                                  <button
+                                    className="image-control-btn zoom-btn zoom-out"
+                                    title="缩小"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      adjustImageTransform(f.name, 'zoomOut');
+                                    }}
+                                  >
+                                    −
+                                  </button>
+                                </div>
+                              </div>
+                            </>
                           ) : (
                             <input
                               type="text"

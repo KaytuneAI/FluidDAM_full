@@ -566,7 +566,7 @@
   list-style: none;
   padding: 0;
   margin: 0;
-  max-height: 320px;
+  max-height: 480px;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: rgba(0, 212, 255, 0.3) transparent;
@@ -695,6 +695,156 @@
   color: #999 !important;
   cursor: not-allowed !important;
   opacity: 1;
+}
+
+/* 图片字段拖拽区域 */
+.image-drop-zone {
+  width: 100%;
+  min-height: 80px;
+  border: 2px dashed rgba(0, 212, 255, 0.3);
+  border-radius: 8px;
+  background: rgba(0, 212, 255, 0.02);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  margin-top: 8px;
+  position: relative;
+}
+
+.image-drop-zone:hover {
+  border-color: rgba(0, 212, 255, 0.5);
+  background: rgba(0, 212, 255, 0.05);
+}
+
+.image-drop-zone.drag-over {
+  border-color: rgba(0, 212, 255, 0.8);
+  background: rgba(0, 212, 255, 0.1);
+  border-width: 3px;
+}
+
+.drop-zone-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  text-align: center;
+}
+
+.drop-zone-icon {
+  font-size: 24px;
+  opacity: 0.6;
+}
+
+.drop-zone-text {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.6);
+  line-height: 1.4;
+}
+
+/* 图片控制按钮组 - 放在拖拽区域下方 */
+.image-control-buttons {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 12px;
+  padding: 8px 0;
+}
+
+/* 方向键容器 - WASD 方式排列 */
+.dpad-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.dpad-middle {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 缩放按钮容器 - 上下堆叠，靠右 */
+.zoom-container {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.image-control-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.95);
+  color: rgba(0, 0, 0, 0.7);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  user-select: none;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.image-control-btn:hover {
+  background: rgba(0, 212, 255, 0.15);
+  border-color: rgba(0, 212, 255, 0.6);
+  color: rgba(0, 212, 255, 1);
+  transform: scale(1.1);
+  box-shadow: 0 4px 8px rgba(0, 212, 255, 0.2);
+}
+
+.image-control-btn:active {
+  transform: scale(0.95);
+  background: rgba(0, 212, 255, 0.25);
+}
+
+/* 方向键按钮 - WASD 布局 */
+.dpad-btn {
+  width: 32px;
+  height: 32px;
+}
+
+.dpad-up {
+  border-radius: 4px;
+  margin-bottom: 2px;
+}
+
+.dpad-down {
+  border-radius: 4px;
+}
+
+.dpad-left {
+  border-radius: 4px;
+}
+
+.dpad-right {
+  border-radius: 4px;
+}
+
+/* 缩放按钮 */
+.zoom-btn {
+  width: 32px;
+  height: 32px;
+}
+
+.zoom-in {
+  border-radius: 4px 4px 0 0;
+}
+
+.zoom-out {
+  border-radius: 0 0 4px 4px;
 }
 
 .template-upload-label {

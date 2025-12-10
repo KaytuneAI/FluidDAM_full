@@ -238,13 +238,12 @@ export const processZipFile = async (file: File): Promise<ZipProcessResult> => {
         return processedItem;
       });
 
-      // 如果zip文件里有json文件，第一个渲染html的内容（不应用json数据）
-      // json的替换素材从第二个开始
-      processedJsonData = [{} as BannerData, ...processedJsonData];
+      // 不再添加空对象作为第一个，而是在加载时用模板数据填充第一个 JSON 数据项
+      // processedJsonData 保持原样，后续会在 BannerBatchPage 中填充模板数据
     } catch (jsonErr) {
       console.warn("解析 ZIP 中的 JSON 文件失败:", jsonErr);
-      // 即使 JSON 解析失败，也要确保至少有一个模板占位符，以便显示 HTML 模板
-      processedJsonData = [{} as BannerData];
+      // JSON 解析失败时，返回空数组，后续会在 BannerBatchPage 中用模板数据填充
+      processedJsonData = [];
     }
   }
 
