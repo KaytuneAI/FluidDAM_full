@@ -1,0 +1,49 @@
+{
+  "products": [
+    { "id": "p1", "code": "SO12", "name_cn": "单一麦芽12年", "aliases": ["SO12","12年","single origin 12"] },
+    { "id": "p2", "code": "SO18", "name_cn": "单一麦芽18年", "aliases": ["SO18","18年","single origin 18"] }
+  ],
+  "sku_mapping": {
+    "TM": {
+      "SO18": "定制镌刻",
+      "SO12": "入门推荐",
+      "DC12": "和谐饱满",
+      "DC15": "木质辛香",
+      "DC18": "回味悠长",
+      "ART B": "艺境花开",
+      "HarmonyV": "年度新品",
+      "HarmonyIV": "源自自然",
+      "HarmonyIII": "自然珍稀",
+      "HarmonyII": "咖啡风味",
+      "RC2023": "醇厚丰富",
+      "ANOE2022": "焕新风味",
+      "ANOE2023": "心艺礼赞",
+      "SO25": "经典优雅",
+      "SO30": "时光淬炼",
+      "DC30": "珍稀佳作",
+      "Litha": "首注雪莉橡木桶陈年"
+    },
+    "JD": {
+      "SO18": "定制镌刻",
+      "SO12": "入门推荐",
+      "DC12": "和谐饱满",
+      "DC15": "木质辛香",
+      "HarmonyV": "以茶为源"
+    }
+  },
+  "assets": [
+    {
+      "id": "a1",
+      "url": "http://your-fileserver/kvs/so12/kv-v3.jpg",
+      "product_code": "SO12",
+      "channel": "JD",
+      "placement": "快车",
+      "frame": "第一帧",
+      "type": "上新",
+      "message_cn": "麦卡伦 SO12 上新",
+      "start": "2025-08-30",
+      "end": "2025-10-07",
+      "tags": ["KV","主图"]
+    }
+  ]
+}

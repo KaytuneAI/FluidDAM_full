@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FluidDAM 远程日志查看器</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            line-height: 1.4;
+        }
+        
+        .header {
+            background: #2d2d30;
+            padding: 1rem;
+            border-bottom: 1px solid #3e3e42;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        
+        label {
+            font-size: 0.9rem;
+            color: #cccccc;
+        }
+        
+        select, input, button {
+            padding: 0.5rem;
+            border: 1px solid #3e3e42;
+            background: #3c3c3c;
+            color: #d4d4d4;
+            border-radius: 4px;
+        }
+        
+        button {
+            background: #0e639c;
+            border-color: #0e639c;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        button:hover {
+            background: #1177bb;
+        }
+        
+        button:disabled {
+            background: #3c3c3c;
+            cursor: not-allowed;
+        }
+        
+        .stats {
+            display: flex;
+            gap: 2rem;
+            margin-top: 1rem;
+            padding: 1rem;
+            background: #252526;
+            border-radius: 4px;
+        }
+        
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #4ec9b0;
+        }
+        
+        .stat-label {
+            font-size: 0.8rem;
+            color: #cccccc;
+        }
+        
+        .log-container {
+            margin: 1rem;
+            background: #1e1e1e;
+            border: 1px solid #3e3e42;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        
+        .log-header {
+            background: #2d2d30;
+            padding: 0.5rem 1rem;
+            border-bottom: 1px solid #3e3e42;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .log-content {
+            max-height: 60vh;
+            overflow-y: auto;
+            padding: 1rem;
+            font-size: 0.9rem;
+        }
+        
+        .log-line {
+            margin-bottom: 0.25rem;
+            word-wrap: break-word;
+        }
+        
+        .log-line.error {
+            color: #f48771;
+        }
+        
+        .log-line.warn {
+            color: #dcdcaa;
+        }
+        
+        .log-line.info {
+            color: #9cdcfe;
+        }
+        
+        .log-line.success {
+            color: #4ec9b0;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #cccccc;
+        }
+        
+        .error-message {
+            background: #5c2d2d;
+            color: #f48771;
+            padding: 1rem;
+            margin: 1rem;
+            border-radius: 4px;
+            border: 1px solid #f48771;
+        }
+        
+        .auto-refresh {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .auto-refresh input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+        }
+        
+        .search-highlight {
+            background: #ffff00;
+            color: #000;
+            padding: 0.1rem 0.2rem;
+            border-radius: 2px;
+        }
+        
+        @media (max-width: 768px) {
+            .controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .control-group {
+                flex-direction: row;
+                align-items: center;
+            }
+            
+            .stats {
+                flex-direction: column;
+                gap: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="controls">
+            <div class="control-group">
+                <label for="logType">日志类型:</label>
+                <select id="logType">
+                    <option value="server">应用日志</option>
+                    <option value="error">错误日志</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label for="date">日期:</label>
+                <input type="date" id="date">
+            </div>
+            
+            <div class="control-group">
+                <label for="lines">行数:</label>
+                <select id="lines">
+                    <option value="50">50行</option>
+                    <option value="100" selected>100行</option>
+                    <option value="200">200行</option>
+                    <option value="500">500行</option>
+                    <option value="0">全部</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label for="search">搜索:</label>
+                <input type="text" id="search" placeholder="搜索关键词...">
+            </div>
+            
+            <div class="control-group">
+                <button id="refreshBtn">刷新</button>
+            </div>
+            
+            <div class="control-group auto-refresh">
+                <input type="checkbox" id="autoRefresh">
+                <label for="autoRefresh">自动刷新</label>
+            </div>
+        </div>
+        
+        <div class="stats" id="stats">
+            <div class="stat-item">
+                <div class="stat-value" id="totalLines">-</div>
+                <div class="stat-label">总行数</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="filteredLines">-</div>
+                <div class="stat-label">显示行数</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="shareSuccess">-</div>
+                <div class="stat-label">分享成功</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="shareFailed">-</div>
+                <div class="stat-label">分享失败</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="successRate">-</div>
+                <div class="stat-label">成功率</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="log-container">
+        <div class="log-header">
+            <span id="logTitle">日志内容</span>
+            <span id="lastUpdate">最后更新: -</span>
+        </div>
+        <div class="log-content" id="logContent">
+            <div class="loading">点击"刷新"按钮加载日志...</div>
+        </div>
+    </div>
+
+    <script>
+        class LogViewer {
+            constructor() {
+                this.apiBase = window.location.origin;
+                this.autoRefreshInterval = null;
+                this.init();
+            }
+            
+            init() {
+                // 设置默认日期为今天
+                document.getElementById('date').value = new Date().toISOString().split('T')[0];
+                
+                // 绑定事件
+                document.getElementById('refreshBtn').addEventListener('click', () => this.loadLogs());
+                document.getElementById('autoRefresh').addEventListener('change', (e) => this.toggleAutoRefresh(e.target.checked));
+                document.getElementById('search').addEventListener('input', () => this.loadLogs());
+                
+                // 初始加载
+                this.loadLogs();
+            }
+            
+            async loadLogs() {
+                const logType = document.getElementById('logType').value;
+                const date = document.getElementById('date').value;
+                const lines = parseInt(document.getElementById('lines').value);
+                const search = document.getElementById('search').value;
+                
+                try {
+                    // 显示加载状态
+                    document.getElementById('logContent').innerHTML = '<div class="loading">加载中...</div>';
+                    
+                    // 加载日志
+                    const response = await fetch(`${this.apiBase}/api/logs?type=${logType}&date=${date}&lines=${lines}&search=${encodeURIComponent(search)}`);
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        this.displayLogs(data.logs, search);
+                        this.updateStats(data);
+                        document.getElementById('lastUpdate').textContent = `最后更新: ${new Date().toLocaleTimeString()}`;
+                    } else {
+                        this.showError(data.message);
+                    }
+                } catch (error) {
+                    this.showError(`加载日志失败: ${error.message}`);
+                }
+            }
+            
+            displayLogs(logs, search) {
+                const logContent = document.getElementById('logContent');
+                const logTitle = document.getElementById('logTitle');
+                
+                logTitle.textContent = `日志内容 (${logs.length} 行)`;
+                
+                if (logs.length === 0) {
+                    logContent.innerHTML = '<div class="loading">没有找到匹配的日志</div>';
+                    return;
+                }
+                
+                const html = logs.map(line => {
+                    let className = 'log-line';
+                    let content = line;
+                    
+                    // 根据日志级别添加样式
+                    if (line.includes('[ERROR]')) className += ' error';
+                    else if (line.includes('[WARN]')) className += ' warn';
+                    else if (line.includes('[INFO]')) className += ' info';
+                    else if (line.includes('成功')) className += ' success';
+                    
+                    // 高亮搜索关键词
+                    if (search) {
+                        const regex = new RegExp(`(${search})`, 'gi');
+                        content = content.replace(regex, '<span class="search-highlight">$1</span>');
+                    }
+                    
+                    return `<div class="${className}">${content}</div>`;
+                }).join('');
+                
+                logContent.innerHTML = html;
+            }
+            
+            updateStats(data) {
+                document.getElementById('totalLines').textContent = data.totalLines || 0;
+                document.getElementById('filteredLines').textContent = data.filteredLines || 0;
+            }
+            
+            async loadStats() {
+                try {
+                    const date = document.getElementById('date').value;
+                    const response = await fetch(`${this.apiBase}/api/logs/stats?date=${date}`);
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        const stats = data.stats;
+                        document.getElementById('shareSuccess').textContent = stats.shareStats.success;
+                        document.getElementById('shareFailed').textContent = stats.shareStats.failed;
+                        document.getElementById('successRate').textContent = `${stats.shareStats.successRate}%`;
+                    }
+                } catch (error) {
+                    console.error('加载统计信息失败:', error);
+                }
+            }
+            
+            showError(message) {
+                document.getElementById('logContent').innerHTML = `<div class="error-message">${message}</div>`;
+            }
+            
+            toggleAutoRefresh(enabled) {
+                if (enabled) {
+                    this.autoRefreshInterval = setInterval(() => {
+                        this.loadLogs();
+                        this.loadStats();
+                    }, 5000); // 每5秒刷新一次
+                } else {
+                    if (this.autoRefreshInterval) {
+                        clearInterval(this.autoRefreshInterval);
+                        this.autoRefreshInterval = null;
+                    }
+                }
+            }
+        }
+        
+        // 初始化日志查看器
+        new LogViewer();
+    </script>
+</body>
+</html>

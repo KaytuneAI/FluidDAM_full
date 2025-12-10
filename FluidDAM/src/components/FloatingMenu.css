@@ -1,0 +1,206 @@
+.floating-menu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10000;
+  transform: translateY(-100%);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+}
+
+.floating-menu.visible {
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.floating-menu-content {
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 24px;
+  gap: 24px;
+  min-height: 56px;
+  position: relative;
+}
+
+.floating-menu-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  gap: 0;
+  margin: 0 auto;
+}
+
+.floating-menu-button-wrapper {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  position: relative;
+  min-width: 0;
+}
+
+.floating-menu-button-wrapper + .floating-menu-button-wrapper {
+  margin-left: 120px;
+}
+
+.floating-menu-title {
+  flex: 0 0 auto;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 600;
+  color: #333;
+  white-space: nowrap;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', 'SF Pro Display', sans-serif;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  padding: 0 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 200px;
+}
+
+.floating-menu-logo {
+  position: absolute;
+  right: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.floating-menu-logo-image {
+  height: 36px;
+  width: auto;
+  max-width: 156px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
+}
+
+.floating-menu-item {
+  padding: 10px 20px;
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  font-size: 16px !important;
+  font-weight: 500 !important;
+  color: #333;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', 'SF Pro Display', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif !important;
+  text-align: center;
+  position: relative;
+  min-width: 120px;
+}
+
+/* 确保悬浮菜单按钮字体大小不被全局样式覆盖 */
+.floating-menu .floating-menu-item,
+.floating-menu-item,
+button.floating-menu-item {
+  font-size: 16px !important;
+  font-weight: 500 !important;
+}
+
+.floating-menu-description {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%) translateX(-10px);
+  font-size: 13px;
+  color: #666;
+  white-space: nowrap;
+  opacity: 0;
+  transition: all 0.3s ease;
+  pointer-events: none;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', 'SF Pro Display', sans-serif;
+  background: rgba(255, 255, 255, 0.98);
+  padding: 6px 12px;
+  border-radius: 6px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  z-index: 10;
+}
+
+.floating-menu-button-wrapper:hover .floating-menu-description {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+.floating-menu-item:hover {
+  background: rgba(102, 126, 234, 0.1);
+  border-color: rgba(102, 126, 234, 0.3);
+  color: #667eea;
+  transform: translateY(-1px);
+}
+
+.floating-menu-item.active {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-color: transparent;
+}
+
+.floating-menu-item.active:hover {
+  background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .floating-menu-content {
+    padding: 10px 16px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .floating-menu-buttons {
+    width: 100%;
+    justify-content: center;
+    order: 1;
+    flex-wrap: wrap;
+  }
+
+  .floating-menu-button-wrapper {
+    flex: 1 1 100%;
+    margin-right: 0;
+    margin-bottom: 8px;
+  }
+
+  .floating-menu-button-wrapper:last-child {
+    margin-bottom: 0;
+  }
+
+  .floating-menu-description {
+    position: static;
+    margin-left: 8px;
+    opacity: 1;
+    transform: none;
+  }
+
+  .floating-menu-title {
+    width: 100%;
+    order: 2;
+    font-size: 14px;
+    min-width: auto;
+  }
+
+  .floating-menu-logo {
+    width: 100%;
+    justify-content: center;
+    order: 3;
+  }
+
+  .floating-menu-item {
+    padding: 8px 16px;
+    font-size: 13px;
+  }
+}

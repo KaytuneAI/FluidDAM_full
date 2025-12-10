@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>JSON修复测试</title>
+</head>
+<body>
+    <h1>JSON修复测试</h1>
+    <div id="result"></div>
+    
+    <script>
+        // 测试JSON解析错误定位
+        function testJsonParse(jsonString) {
+            try {
+                const data = JSON.parse(jsonString);
+                document.getElementById('result').innerHTML = '<p style="color: green;">✅ JSON解析成功！</p>';
+                return data;
+            } catch (e) {
+                const pos = e.message.match(/position (\d+)/)?.[1];
+                if (pos) {
+                    const p = Number(pos);
+                    const context = jsonString.slice(Math.max(0, p - 60), p + 60);
+                    document.getElementById('result').innerHTML = 
+                        '<p style="color: red;">❌ JSON解析失败</p>' +
+                        '<p>错误位置: ' + p + '</p>' +
+                        '<p>错误字符: "' + jsonString.charAt(p) + '"</p>' +
+                        '<p>上下文: <code>' + context + '</code></p>';
+                }
+                throw e;
+            }
+        }
+        
+        // 测试用例
+        const testCases = [
+            // 正常JSON
+            '{"test": "value"}',
+            
+            // 缺少逗号的错误JSON
+            '{"a": 1}{"b": 2}',
+            
+            // 尾逗号错误
+            '{"a": 1, "b": 2,}',
+            
+            // 未转义引号
+            '{"text": "He said "OK""}'
+        ];
+        
+        testCases.forEach((testCase, index) => {
+            console.log(`测试用例 ${index + 1}:`, testCase);
+            try {
+                testJsonParse(testCase);
+            } catch (e) {
+                console.log('预期错误:', e.message);
+            }
+        });
+    </script>
+</body>
+</html>

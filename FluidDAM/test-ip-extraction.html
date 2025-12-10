@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>IP地址提取测试</title>
+</head>
+<body>
+    <h1>IP地址提取测试</h1>
+    <div id="results"></div>
+    
+    <script>
+        // 测试日志行
+        const testLines = [
+            '[2025/10/11 18:39:54] [INFO] Request: GET /api/logs?type=server&date=2025-10-11&lines=100&search=\n    IP地址: ::1 | 浏览器: Mozilla/5.0',
+            '[2025/10/11 18:39:54] [INFO] Response: GET /api/logs?type=server&date=2025-10-11&lines=100&search= - 200\n    处理时间: 4ms | 状态码: 200',
+            '[2025/10/11 18:39:54] [INFO] Request: POST /api/save-image-data\n    IP地址: 192.168.1.100 | 浏览器: Chrome/91.0'
+        ];
+        
+        function extractIP(line) {
+            let ip = '';
+            const ipMatch1 = line.match(/IP地址:\s*([^\s|]+)/);
+            const ipMatch2 = line.match(/ip:\s*([^\s|]+)/);
+            const ipMatch3 = line.match(/IP:\s*([^\s|]+)/);
+            
+            if (ipMatch1) ip = ipMatch1[1].trim();
+            else if (ipMatch2) ip = ipMatch2[1].trim();
+            else if (ipMatch3) ip = ipMatch3[1].trim();
+            
+            return ip;
+        }
+        
+        const results = document.getElementById('results');
+        
+        testLines.forEach((line, index) => {
+            const ip = extractIP(line);
+            const div = document.createElement('div');
+            div.innerHTML = `
+                <h3>测试 ${index + 1}:</h3>
+                <p><strong>原始日志:</strong> ${line.replace(/\n/g, '<br>')}</p>
+                <p><strong>提取的IP:</strong> ${ip || '未找到IP地址'}</p>
+                <hr>
+            `;
+            results.appendChild(div);
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,173 @@
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+
+/* 隐藏Tldraw frame的标签文字 - 使用最高特异性 */
+.tl-frame-label,
+.tl-frame-heading,
+.tl-frame-heading-hit-area {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  height: 0 !important;
+  width: 0 !important;
+  overflow: hidden !important;
+}
+
+/* 更具体的选择器 */
+[data-shape-type="frame"] .tl-frame-label,
+[data-shape-type="frame"] .tl-frame-heading,
+[data-shape-type="frame"] .tl-frame-heading-hit-area {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  height: 0 !important;
+  width: 0 !important;
+  overflow: hidden !important;
+}
+
+/* 最高特异性选择器 */
+.tl-shape[data-shape-type="frame"] .tl-frame-label,
+.tl-shape[data-shape-type="frame"] .tl-frame-heading,
+.tl-shape[data-shape-type="frame"] .tl-frame-heading-hit-area {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  height: 0 !important;
+  width: 0 !important;
+  overflow: hidden !important;
+}
+
+/* 全局强制隐藏 */
+div.tl-frame-label,
+div.tl-frame-heading,
+div.tl-frame-heading-hit-area {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  height: 0 !important;
+  width: 0 !important;
+  overflow: hidden !important;
+  position: absolute !important;
+  left: -9999px !important;
+  top: -9999px !important;
+}
+
+/* 强制使用正式字体，覆盖Tldraw默认的手写体，但保留字体大小 */
+.tl-text,
+.tl-text-shape,
+[data-shape-type="text"] *,
+.tl-rich-text,
+.tl-rich-text *,
+.tl-text-content,
+.tl-text-content * {
+  font-family: "Arial", "Helvetica", "Microsoft YaHei", "微软雅黑", "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", sans-serif !important;
+  font-style: normal !important;
+  font-weight: normal !important;
+  /* 移除强制字体大小，让TLDraw的size属性生效 */
+}
+
+/* 覆盖Tldraw的文本编辑器字体，但保留字体大小 */
+.tl-text-editor,
+.tl-text-editor *,
+.tl-text-input,
+.tl-text-input * {
+  font-family: "Arial", "Helvetica", "Microsoft YaHei", "微软雅黑", "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", sans-serif !important;
+  font-style: normal !important;
+  font-weight: normal !important;
+  /* 移除强制字体大小，让TLDraw的size属性生效 */
+}
+
+/* 覆盖所有可能的文本元素，但保留字体大小 */
+.tl-shape[data-shape-type="text"] *,
+.tl-shape[data-shape-type="text"] .tl-text,
+.tl-shape[data-shape-type="text"] .tl-rich-text {
+  font-family: "Arial", "Helvetica", "Microsoft YaHei", "微软雅黑", "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", sans-serif !important;
+  font-style: normal !important;
+  font-weight: normal !important;
+  /* 移除强制字体大小，让TLDraw的size属性生效 */
+}
+
+/* 强制覆盖所有英文字体，防止手写体，但排除TLDraw容器 */
+*:not(.tl-container *):not(.tl-container):not(.tl-theme__light *):not(.tl-theme__light):not(.tl-theme__dark *):not(.tl-theme__dark) {
+  font-family: "Arial", "Helvetica", "Microsoft YaHei", "微软雅黑", "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", sans-serif !important;
+  font-size: 12px !important;
+}
+
+/* 特别针对Tldraw的所有文本元素，但保留字体大小 */
+.tl-text,
+.tl-text *,
+.tl-rich-text,
+.tl-rich-text *,
+.tl-text-content,
+.tl-text-content *,
+.tl-text-editor,
+.tl-text-editor *,
+.tl-text-input,
+.tl-text-input *,
+.tl-shape,
+.tl-shape *,
+[class*="tl-"] *,
+[data-shape-type] *,
+.tl-canvas *,
+.tl-overlays *,
+.tl-ui * {
+  font-family: "Arial", "Helvetica", "Microsoft YaHei", "微软雅黑", "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", sans-serif !important;
+  font-style: normal !important;
+  font-weight: normal !important;
+  text-decoration: none !important;
+  /* 移除强制字体大小，让TLDraw的size属性生效 */
+}
+
+/* 覆盖可能的cursive和handwriting字体，但排除TLDraw容器 */
+*[style*="font-family"]:not(.tl-container *):not(.tl-container):not(.tl-theme__light *):not(.tl-theme__light):not(.tl-theme__dark *):not(.tl-theme__dark) {
+  font-family: "Arial", "Helvetica", "Microsoft YaHei", "微软雅黑", "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", sans-serif !important;
+  font-size: 12px !important;
+}
+
+/* 强制覆盖所有可能的字体变体 */
+* {
+  font-variant: normal !important;
+  font-stretch: normal !important;
+  font-kerning: auto !important;
+  font-feature-settings: normal !important;
+}
