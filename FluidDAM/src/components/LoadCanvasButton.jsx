@@ -1306,7 +1306,7 @@ export default function LoadCanvasButton({ editor, setIsLoading }) {
            justifyContent: "center"
          }}
         >
-          <img src="/icons/load_canvas.png" alt="加载画布" style={{width: 32, height: 32}} />
+          <img src={`${import.meta.env.BASE_URL || ''}icons/load_canvas.png`} alt="加载画布" style={{width: 32, height: 32}} />
         </button>
         
 

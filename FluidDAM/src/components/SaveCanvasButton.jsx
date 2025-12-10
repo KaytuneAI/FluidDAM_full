@@ -137,7 +137,7 @@ export default function SaveCanvasButton({ editor }) {
          justifyContent: "center"
        }}
       >
-        <img src="/icons/save_canvas.png" alt="保存画布" style={{width: 32, height: 32}} />
+        <img src={`${import.meta.env.BASE_URL || ''}icons/save_canvas.png`} alt="保存画布" style={{width: 32, height: 32}} />
       </button>
   );
 }

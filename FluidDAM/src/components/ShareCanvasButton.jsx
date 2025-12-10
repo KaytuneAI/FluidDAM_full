@@ -281,7 +281,7 @@ export default function ShareCanvasButton({ editor }) {
             animation: "spin 1s linear infinite"
           }} />
         ) : (
-          <img src="/icons/share_canvas.png" alt="分享画布" style={{width: 32, height: 32}} />
+          <img src={`${import.meta.env.BASE_URL || ''}icons/share_canvas.png`} alt="分享画布" style={{width: 32, height: 32}} />
         )}
       </button>
 

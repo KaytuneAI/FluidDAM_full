@@ -14,6 +14,7 @@ import { parseRowPerSkuSheet, ExcelRowData } from "../../utils/offerRowPerSkuPar
 import { parseMultiRowProducts } from "../../utils/multiRowProductParser";
 import { parseRowPerSkuProducts } from "../../utils/rowPerSkuProductParser";
 import { ProductBlock } from "../../types";
+import { AssetSidebar } from "../../components/AssetSidebar";
 import "./BannerBatchPage.css";
 
 export const BannerBatchPage: React.FC = () => {
@@ -1983,6 +1984,21 @@ export const BannerBatchPage: React.FC = () => {
               <p>4. 点击"一键生成"批量导出 PNG</p>
             </div>
           </div>
+        </div>
+
+        {/* 右侧素材面板 */}
+        <div className="banner-asset-sidebar">
+          <AssetSidebar
+            jsonData={jsonData}
+            currentIndex={currentIndex}
+            onAssetClick={(assetUrl, fieldName) => {
+              // 点击素材时，可以高亮对应的字段
+              if (templateFields.some(f => f.name === fieldName)) {
+                handleFieldClick(fieldName);
+                updateFieldValue(fieldName, assetUrl);
+              }
+            }}
+          />
         </div>
       </div>
     </div>
