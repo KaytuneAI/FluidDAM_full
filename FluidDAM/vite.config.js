@@ -4,9 +4,9 @@ import fs from 'fs'
 import path from 'path'
 
 // https://vite.dev/config/
-export default defineConfig(({ mode }) => ({
+export default defineConfig(({ command }) => ({
   // Production: /spotstudio/, Development: /
-  base: mode === 'production' ? '/spotstudio/' : '/',
+  base: command === 'build' ? '/spotstudio/' : '/',
   plugins: [react()],
   server: {
     port: 5173,

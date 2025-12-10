@@ -10,10 +10,10 @@ function AppContent() {
   const basename = import.meta.env.MODE === 'production' ? '/bannergen' : '';
   
   const handleNavigateToLink = () => {
-    // In production, Link is at /link (root level)
+    // In production, Link is at /bannergen/link (within BannerGen app)
     // In development, use navigation utility
     if (import.meta.env.MODE === 'production') {
-      window.location.href = '/link';
+      window.location.href = '/bannergen/link';
     } else {
       navigateToLink();
     }

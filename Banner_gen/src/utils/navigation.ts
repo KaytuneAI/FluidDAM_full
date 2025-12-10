@@ -43,7 +43,7 @@ export function getFluidDAMUrl(): string {
  */
 export function getLinkUrl(): string {
   if (isProductionMode()) {
-    return '/link';
+    return '/bannergen/link';
   }
   
   // Development mode: use direct port
