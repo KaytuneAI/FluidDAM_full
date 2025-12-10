@@ -116,10 +116,12 @@ export const LinkPage: React.FC = () => {
         setSelectedFolder(directoryHandle.name);
       } catch (error: any) {
         // 用户取消选择或其他错误
-        if (error.name !== 'AbortError' && error.name !== 'NotAllowedError') {
-          console.error('Error selecting folder:', error);
+        if (error.name === 'AbortError' || error.name === 'NotAllowedError') {
+          // 用户主动取消，不进行降级处理
+          return;
         }
-        // 如果 File System Access API 失败，降级到传统方法
+        // 其他错误才降级到传统方法
+        console.error('Error selecting folder:', error);
         folderInputRef.current?.click();
       }
     } else {
@@ -304,8 +306,7 @@ export const LinkPage: React.FC = () => {
           <input
             ref={folderInputRef}
             type="file"
-            webkitdirectory=""
-            directory=""
+            {...({ webkitdirectory: '', directory: '' } as any)}
             multiple
             onChange={handleFolderSelect}
             style={{ display: 'none' }}

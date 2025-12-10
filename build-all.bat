@@ -7,8 +7,23 @@ echo Building FluidDAM Unified Applications
 echo ==========================================
 echo.
 
+REM Install dependencies for root entry (Home)
+echo [Step 1/6] Installing dependencies for root entry...
+if not exist "node_modules" (
+    echo [INFO] node_modules not found, installing dependencies...
+    call npm install
+    if errorlevel 1 (
+        echo [ERROR] Failed to install root dependencies
+        pause
+        exit /b 1
+    )
+) else (
+    echo [OK] Dependencies already installed
+)
+echo.
+
 REM Build root entry (Home)
-echo [1/3] Building root entry (Home)...
+echo [Step 2/6] Building root entry (Home)...
 call npm run build
 if errorlevel 1 (
     echo [ERROR] Failed to build root entry
@@ -18,9 +33,24 @@ if errorlevel 1 (
 echo [OK] Root entry built successfully
 echo.
 
-REM Build Banner_gen
-echo [2/3] Building Banner_gen...
+REM Install dependencies for Banner_gen
+echo [Step 3/6] Installing dependencies for Banner_gen...
 cd /d "%~dp0Banner_gen"
+if not exist "node_modules" (
+    echo [INFO] node_modules not found, installing dependencies...
+    call npm install
+    if errorlevel 1 (
+        echo [ERROR] Failed to install Banner_gen dependencies
+        pause
+        exit /b 1
+    )
+) else (
+    echo [OK] Dependencies already installed
+)
+echo.
+
+REM Build Banner_gen
+echo [Step 4/6] Building Banner_gen...
 call npm run build
 if errorlevel 1 (
     echo [ERROR] Failed to build Banner_gen
@@ -30,9 +60,24 @@ if errorlevel 1 (
 echo [OK] Banner_gen built successfully
 echo.
 
-REM Build FluidDAM
-echo [3/3] Building FluidDAM (SpotStudio)...
+REM Install dependencies for FluidDAM
+echo [Step 5/6] Installing dependencies for FluidDAM...
 cd /d "%~dp0FluidDAM"
+if not exist "node_modules" (
+    echo [INFO] node_modules not found, installing dependencies...
+    call npm install
+    if errorlevel 1 (
+        echo [ERROR] Failed to install FluidDAM dependencies
+        pause
+        exit /b 1
+    )
+) else (
+    echo [OK] Dependencies already installed
+)
+echo.
+
+REM Build FluidDAM
+echo [Step 6/6] Building FluidDAM (SpotStudio)...
 call npm run build
 if errorlevel 1 (
     echo [ERROR] Failed to build FluidDAM

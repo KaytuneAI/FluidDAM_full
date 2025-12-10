@@ -21,7 +21,7 @@ export const FloatingMenu: React.FC<FloatingMenuProps> = ({
 }) => {
   const [isVisible, setIsVisible] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 控制页面内容下移
   useEffect(() => {

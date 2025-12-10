@@ -5,7 +5,7 @@ import { parseFirstSheet, ParsedSheet, getFirstVisibleSheetName } from "../../..
 import { detectOfferSheet } from "../../../utils/offerDetector";
 import { parseRowPerSkuSheet } from "../../../utils/offerRowPerSkuParser";
 import { parseJsonFile } from "../../../utils/fileHelpers";
-import type { ReturnType } from "react";
+// ReturnType is a built-in TypeScript utility type, no need to import
 
 /**
  * 文件上传处理 Hook
