@@ -75,14 +75,17 @@ export default function HomePage() {
       <div className="home-header">
         <div className="home-logo">
           <img 
-            src="/Banner_gen/image/kaytuneai logo.png" 
+            src="/image/kaytuneai logo.png" 
             alt="Kaytune AI Logo" 
             className="logo-image"
             onError={(e) => {
-              // Fallback: try direct path if proxy fails
+              // Fallback: try BannerGen path if local fails
               const target = e.target as HTMLImageElement;
-              const fallbackUrl = import.meta.env.VITE_BANNER_GEN_URL || 'http://localhost:5174';
-              if (!target.src.includes(fallbackUrl)) {
+              const isProduction = import.meta.env.MODE === 'production';
+              if (isProduction) {
+                target.src = '/bannergen/image/kaytuneai logo.png';
+              } else {
+                const fallbackUrl = import.meta.env.VITE_BANNER_GEN_URL || 'http://localhost:5174';
                 target.src = `${fallbackUrl}/image/kaytuneai logo.png`;
               }
             }}
