@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { navigateToBannerGen, navigateToFluidDAM, navigateToLink } from "../utils/navigation";
 import "./HomePage.css";
 
 export default function HomePage() {
@@ -55,18 +56,18 @@ export default function HomePage() {
   }, [carouselTexts.length, isPaused]);
 
   const handleNavigateToBannerGen = () => {
-    const bannerGenUrl = import.meta.env.VITE_BANNER_GEN_URL || "http://localhost:5174";
-    window.location.href = bannerGenUrl;
+    // In development, use direct port; in production, use directory path
+    navigateToBannerGen();
   };
 
   const handleNavigateToFluidDAM = () => {
-    const fluidDAMUrl = import.meta.env.VITE_FLUIDDAM_URL || "http://localhost:5173";
-    window.location.href = fluidDAMUrl;
+    // In development, use direct port; in production, use directory path
+    navigateToFluidDAM();
   };
 
   const handleNavigateToLink = () => {
-    const bannerGenUrl = import.meta.env.VITE_BANNER_GEN_URL || "http://localhost:5174";
-    window.location.href = `${bannerGenUrl}/link`;
+    // In development, use direct port; in production, use directory path
+    navigateToLink();
   };
 
   return (
@@ -74,14 +75,15 @@ export default function HomePage() {
       <div className="home-header">
         <div className="home-logo">
           <img 
-            src="http://localhost:5174/image/kaytuneai logo.png" 
+            src="/Banner_gen/image/kaytuneai logo.png" 
             alt="Kaytune AI Logo" 
             className="logo-image"
             onError={(e) => {
-              // 如果直接路径失败，尝试使用代理路径
+              // Fallback: try direct path if proxy fails
               const target = e.target as HTMLImageElement;
-              if (!target.src.includes('/Banner_gen')) {
-                target.src = '/Banner_gen/image/kaytuneai logo.png';
+              const fallbackUrl = import.meta.env.VITE_BANNER_GEN_URL || 'http://localhost:5174';
+              if (!target.src.includes(fallbackUrl)) {
+                target.src = `${fallbackUrl}/image/kaytuneai logo.png`;
               }
             }}
           />

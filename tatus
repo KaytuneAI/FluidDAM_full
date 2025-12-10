@@ -1,0 +1,27 @@
+warning: in the working copy of 'Banner_gen/src/App.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'Banner_gen/src/pages/BannerBatchPage/BannerBatchPage.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'Banner_gen/src/pages/BannerBatchPage/BannerBatchPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'Banner_gen/src/pages/LinkPage/LinkPage.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'Banner_gen/src/pages/LinkPage/LinkPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'Banner_gen/vite.config.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'FluidDAM/src/App.jsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/pages/HomePage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'start-all.bat', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'stop-all.bat', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'vite.config.ts', LF will be replaced by CRLF the next time Git touches it
+ Banner_gen/src/App.tsx                             |  20 [32m++[m[31m-[m
+ .../src/pages/BannerBatchPage/BannerBatchPage.css  | 197 [32m+++++++++++++++[m[31m------[m
+ .../src/pages/BannerBatchPage/BannerBatchPage.tsx  |  50 [32m+++[m[31m---[m
+ Banner_gen/src/pages/LinkPage/LinkPage.css         |  20 [32m+++[m
+ Banner_gen/src/pages/LinkPage/LinkPage.tsx         | 100 [32m++++++++[m[31m---[m
+ Banner_gen/vite.config.ts                          |   1 [32m+[m
+ FluidDAM/src/App.jsx                               |  13 [32m+[m[31m-[m
+ FluidDAM/src/utils/apiUtils-LeiAMD.js              |  31 [32m+++[m[31m-[m
+ FluidDAM/src/utils/apiUtils.js                     |  31 [32m+++[m[31m-[m
+ FluidDAM/vite.config.js                            |   7 [32m+[m[31m-[m
+ src/App.tsx                                        |   6 [32m+[m[31m-[m
+ src/pages/HomePage.tsx                             |  22 [32m+[m[31m--[m
+ start-all.bat                                      |  45 [32m+++[m[31m--[m
+ stop-all.bat                                       |  31 [32m++[m[31m--[m
+ vite.config.ts                                     |  47 [32m++++[m[31m-[m
+ 15 files changed, 445 insertions(+), 176 deletions(-)

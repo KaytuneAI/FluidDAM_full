@@ -2,18 +2,15 @@ import React from "react";
 import MainCanvas from "./MainCanvas";
 import ErrorBoundary from "./ErrorBoundary";
 import { FloatingMenu } from "./components/FloatingMenu";
+import { navigateToLink, navigateToBannerGen, navigateToHome } from "./utils/navigation";
 
 export default function App() {
   const handleNavigateToLink = () => {
-    // 跳转到 Banner_gen 的 Link 页面
-    const bannerGenUrl = import.meta.env.VITE_BANNER_GEN_URL || "http://localhost:5174";
-    window.location.href = `${bannerGenUrl}/link`;
+    navigateToLink();
   };
 
   const handleNavigateToBannerGen = () => {
-    // 跳转到 Banner_gen (BannerGen)
-    const bannerGenUrl = import.meta.env.VITE_BANNER_GEN_URL || "http://localhost:5174";
-    window.location.href = bannerGenUrl;
+    navigateToBannerGen();
   };
 
   const handleNavigateToSpotStudio = () => {
@@ -22,9 +19,7 @@ export default function App() {
   };
 
   const handleNavigateToHome = () => {
-    // 跳转到统一入口页面
-    const homeUrl = import.meta.env.VITE_HOME_URL || "http://localhost:3000";
-    window.location.href = homeUrl;
+    navigateToHome();
   };
 
   return (

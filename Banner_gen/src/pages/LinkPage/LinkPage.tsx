@@ -24,9 +24,8 @@ export const LinkPage: React.FC = () => {
     imagesRef.current = images;
   }, [images]);
 
-  // 处理文件夹选择
-  const handleFolderSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
+  // 处理文件列表（从文件选择或 File System Access API）
+  const processFiles = async (files: FileList | File[]) => {
     if (!files || files.length === 0) return;
 
     // 先清理旧的 URL（使用 ref 确保获取最新的 images）
@@ -41,9 +40,11 @@ export const LinkPage: React.FC = () => {
     const imageFiles: ImageFile[] = [];
     const imageTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/svg+xml'];
 
+    // 将 FileList 或 File[] 转换为数组
+    const fileArray = Array.isArray(files) ? files : Array.from(files);
+
     // 遍历所有文件，筛选出图片
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
+    for (const file of fileArray) {
       if (imageTypes.includes(file.type)) {
         const url = URL.createObjectURL(file);
         imageFiles.push({
@@ -64,7 +65,67 @@ export const LinkPage: React.FC = () => {
     // 如果有图片，自动选中第一张
     setSelectedIndex(imageFiles.length > 0 ? 0 : -1);
     setSelectedIndices(new Set()); // 清空多选状态
-    setSelectedFolder(files[0]?.webkitRelativePath?.split('/')[0] || '');
+    
+    // 尝试从 webkitRelativePath 获取文件夹名（仅当使用传统文件选择器时）
+    // 如果文件有 webkitRelativePath，说明是从传统文件选择器选择的
+    const folderName = fileArray[0]?.webkitRelativePath?.split('/')[0];
+    if (folderName) {
+      setSelectedFolder(folderName);
+    } else if (fileArray.length > 0 && !selectedFolder) {
+      // 如果没有 webkitRelativePath 且还没有设置文件夹名，使用默认值
+      setSelectedFolder('已选择文件夹');
+    }
+  };
+
+  // 处理文件夹选择（文件选择器 - 降级方案）
+  const handleFolderSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    await processFiles(files);
+  };
+
+  // 使用 File System Access API 打开文件夹选择对话框
+  const handleSelectFolder = async () => {
+    // 检查是否支持 File System Access API
+    if ('showDirectoryPicker' in window) {
+      try {
+        // @ts-ignore - File System Access API 可能没有类型定义
+        const directoryHandle = await window.showDirectoryPicker({
+          mode: 'read',
+        });
+
+        // 递归读取文件夹中的所有文件
+        const files: File[] = [];
+        const readDirectory = async (dirHandle: any, path = '') => {
+          for await (const entry of dirHandle.values()) {
+            if (entry.kind === 'file') {
+              const file = await entry.getFile();
+              files.push(file);
+            } else if (entry.kind === 'directory') {
+              await readDirectory(entry, `${path}/${entry.name}`);
+            }
+          }
+        };
+
+        await readDirectory(directoryHandle);
+        
+        // 处理文件（直接传递文件数组）
+        await processFiles(files as any);
+        
+        // 设置文件夹名（在 processFiles 之后，避免被覆盖）
+        setSelectedFolder(directoryHandle.name);
+      } catch (error: any) {
+        // 用户取消选择或其他错误
+        if (error.name !== 'AbortError' && error.name !== 'NotAllowedError') {
+          console.error('Error selecting folder:', error);
+        }
+        // 如果 File System Access API 失败，降级到传统方法
+        folderInputRef.current?.click();
+      }
+    } else {
+      // 浏览器不支持 File System Access API，使用传统方法
+      folderInputRef.current?.click();
+    }
   };
 
   // 清理 URL 对象（只在组件卸载时）
@@ -191,9 +252,9 @@ export const LinkPage: React.FC = () => {
   // 处理本地素材按钮点击
   const handleLocalMaterialClick = () => {
     setActiveTab('local');
-    // 无论是否有图片，都允许重新选择文件夹
+    // 如果已经有图片，重新选择文件夹；如果没有图片，也打开选择器
     setTimeout(() => {
-      folderInputRef.current?.click();
+      handleSelectFolder();
     }, 100);
   };
 
@@ -255,19 +316,16 @@ export const LinkPage: React.FC = () => {
             {activeTab === 'local' ? (
               images.length === 0 ? (
                 <div className="empty-state">
-                  <p>请选择包含图片的文件夹</p>
-                  <p className="hint">支持 PNG、JPG、GIF、WebP、SVG 格式</p>
-                  <p className="hint-small">💡 仅本地浏览，不会上传文件</p>
-                  <p className="hint-warning">
-                    ⚠️ 浏览器会显示安全提示，点击"上传"只是允许我们读取文件，<br />
-                    所有操作都在本地完成，文件不会发送到服务器
-                  </p>
-                  <button
-                    className="btn-select-folder-inline"
-                    onClick={() => folderInputRef.current?.click()}
-                  >
-                    📁 浏览本地文件夹
-                  </button>
+                  <div className="select-folder-prompt">
+                    <div className="select-folder-icon">📁</div>
+                    <div className="select-folder-text">选择本地文件夹浏览图片</div>
+                    <button
+                      className="btn-select-folder-inline"
+                      onClick={handleSelectFolder}
+                    >
+                      选择文件夹
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <>

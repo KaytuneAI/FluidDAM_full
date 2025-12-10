@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import { BannerBatchPage } from "./pages/BannerBatchPage";
 import { LinkPage } from "./pages/LinkPage";
 import { FloatingMenu } from "./components/FloatingMenu";
+import { navigateToLink, navigateToFluidDAM, navigateToHome } from "./utils/navigation";
 import "./App.css";
 
 function AppContent() {
@@ -9,25 +10,26 @@ function AppContent() {
   const basename = import.meta.env.MODE === 'production' ? '/bannergen' : '';
   
   const handleNavigateToLink = () => {
-    // 跳转到素材链接页面
-    window.location.href = `${basename}/link`;
+    // In production, Link is at /link (root level)
+    // In development, use navigation utility
+    if (import.meta.env.MODE === 'production') {
+      window.location.href = '/link';
+    } else {
+      navigateToLink();
+    }
   };
 
   const handleNavigateToBannerGen = () => {
-    // 跳转到 BannerGen
+    // Navigate to BannerGen page (relative to current basename)
     window.location.href = `${basename}/banner-batch`;
   };
 
   const handleNavigateToSpotStudio = () => {
-    // 跳转到 FluidDAM (SpotStudio)
-    const fluidDAMUrl = import.meta.env.VITE_FLUIDDAM_URL || "http://localhost:5173";
-    window.location.href = fluidDAMUrl;
+    navigateToFluidDAM();
   };
 
   const handleNavigateToHome = () => {
-    // 跳转到统一入口页面
-    const homeUrl = import.meta.env.VITE_HOME_URL || "http://localhost:3000";
-    window.location.href = homeUrl;
+    navigateToHome();
   };
 
   // 判断当前页面

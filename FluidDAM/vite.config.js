@@ -4,8 +4,9 @@ import fs from 'fs'
 import path from 'path'
 
 // https://vite.dev/config/
-export default defineConfig({
-  base: '/', 
+export default defineConfig(({ mode }) => ({
+  // Production: /spotstudio/, Development: /
+  base: mode === 'production' ? '/spotstudio/' : '/',
   plugins: [react()],
   server: {
     port: 5173,
@@ -59,4 +60,4 @@ export default defineConfig({
   define: {
     'process.env.NODE_ENV': '"production"'
   },
-})
+}))

@@ -1,31 +1,42 @@
 @echo off
 chcp 65001 >nul
 echo ========================================
-echo 正在停止所有 FluidDAM 应用...
+echo Stopping all FluidDAM applications...
 echo ========================================
 echo.
 
-REM 通过端口查找并停止进程
-echo 正在查找并停止运行在端口 3000 的进程（统一入口）...
+REM Find and stop processes by port
+echo Finding and stopping process on port 3000 (Unified Entry)...
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3000" ^| findstr "LISTENING"') do (
-    echo 停止进程 PID: %%a
+    echo Stopping process PID: %%a
     taskkill /F /PID %%a >nul 2>&1
 )
 
-echo 正在查找并停止运行在端口 5174 的进程（Banner_gen）...
+echo Finding and stopping process on port 3001 (API Server)...
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3001" ^| findstr "LISTENING"') do (
+    echo Stopping process PID: %%a
+    taskkill /F /PID %%a >nul 2>&1
+)
+
+echo Finding and stopping process on port 5174 (Banner_gen)...
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5174" ^| findstr "LISTENING"') do (
-    echo 停止进程 PID: %%a
+    echo Stopping process PID: %%a
     taskkill /F /PID %%a >nul 2>&1
 )
 
-echo 正在查找并停止运行在端口 5173 的进程（FluidDAM）...
+echo Finding and stopping process on port 5173 (FluidDAM)...
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5173" ^| findstr "LISTENING"') do (
-    echo 停止进程 PID: %%a
+    echo Stopping process PID: %%a
     taskkill /F /PID %%a >nul 2>&1
 )
+
+REM Close terminal windows by window title
+echo.
+echo Closing terminal windows...
+REM Close windows by title using PowerShell (more reliable than taskkill)
+powershell -Command "Get-Process cmd -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -match 'FluidDAM|Banner_gen' } | Stop-Process -Force" >nul 2>&1
 
 echo.
-echo 所有应用已停止！
+echo All applications and terminal windows stopped!
 echo.
 pause
-

@@ -1674,39 +1674,39 @@ export const BannerBatchPage: React.FC = () => {
             <h3>选择模板</h3>
             
             <div className="template-selector-content">
-              {/* ZIP 上传区域（左侧一半） */}
-              <div className="template-upload-section template-upload-left">
-                <h3>上传模板（包含 HTML、CSS、图片和Json替换文件的 ZIP 文件）</h3>
+              {/* 统一上传区域 */}
+              <div className="template-upload-section template-upload-unified">
+                <h3>上传文件</h3>
                 <p className="template-upload-hint">
-                  <br></br>
+                  支持 ZIP 模板文件（包含 HTML、CSS、图片和 Json 替换文件）或 Excel 数据文件
                 </p>
                 <label className="template-upload-label">
                   <input
                     ref={zipInputRef}
                     type="file"
-                    accept=".zip"
-                    onChange={(e) => handleZipUpload(e.target.files?.[0] || null)}
+                    accept=".zip,.xlsx,.xls"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] || null;
+                      if (!file) return;
+                      
+                      // 根据文件类型调用不同的处理函数
+                      const fileName = file.name.toLowerCase();
+                      if (fileName.endsWith('.zip')) {
+                        handleZipUpload(file);
+                      } else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+                        handleExcelUpload(file);
+                      } else {
+                        setError('不支持的文件类型，请上传 ZIP 或 Excel 文件');
+                      }
+                      
+                      // 清空 input 以便可以重复选择同一文件
+                      if (e.target) {
+                        e.target.value = '';
+                      }
+                    }}
                     className="template-file-input"
                   />
-                  <span className="btn btn-primary btn-small">上传 ZIP 模板</span>
-                </label>
-              </div>
-
-              {/* 上传Excel区域（中间） */}
-              <div className="template-excel-upload-section">
-                <h3>上传Excel</h3>
-                <p className="template-upload-hint">
-                  <br></br>
-                </p>
-                <label className="template-upload-label">
-                  <input
-                    ref={excelInputRef}
-                    type="file"
-                    accept=".xlsx,.xls"
-                    onChange={(e) => handleExcelUpload(e.target.files?.[0] || null)}
-                    className="template-file-input"
-                  />
-                  <span className="btn btn-primary btn-small">上传 Excel</span>
+                  <span className="btn btn-primary btn-small">上传文件</span>
                 </label>
               </div>
 

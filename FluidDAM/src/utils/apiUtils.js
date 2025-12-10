@@ -2,26 +2,41 @@
 
 // 动态获取API基础URL
 export function getApiBaseUrl() {
-  // 在开发环境中使用localhost
-  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    return 'http://localhost:3001';
-  }
-  
-  // 生产环境：检查是否有自定义API地址
+  // 检查是否有自定义API地址
   const customApiUrl = window.FLUIDDAM_API_URL || process.env.REACT_APP_API_URL;
   if (customApiUrl) {
     return customApiUrl;
   }
   
-  // 生产环境：使用相对路径，让Nginx处理路由
+  // 在开发环境中
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    const port = window.location.port;
+    
+    // 如果通过统一入口（端口 3000）访问，使用相对路径让 vite 代理转发
+    if (port === '3000' || port === '') {
+      return '/api'; // 使用相对路径，会被 vite proxy 转发到 3001
+    }
+    
+    // 如果直接访问 FluidDAM 前端（端口 5173），使用 3001 端口
+    if (port === '5173') {
+      return 'http://localhost:3001';
+    }
+  }
+  
+  // 生产环境：使用相对路径，让 Nginx 或 vite 代理处理路由
   const protocol = window.location.protocol;
   const hostname = window.location.hostname;
   const port = window.location.port;
   
-  // 如果使用Nginx反向代理，API路径应该通过Nginx路由到后端
+  // 如果使用 Nginx 反向代理，API路径应该通过 Nginx 路由到后端
   // 检查是否在标准端口（80/443）上运行
   if (port === '' || port === '80' || port === '443') {
     return `${protocol}//${hostname}/api`;
+  }
+  
+  // 如果通过统一入口访问，使用相对路径
+  if (port === '3000') {
+    return '/api';
   }
   
   // 否则使用当前主机和3001端口
