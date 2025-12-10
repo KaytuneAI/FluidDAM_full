@@ -49,7 +49,7 @@ export default function App() {
           },
         ]}
         triggerHeight={60}
-        logoUrl="/image/kaytuneai logo.png"
+        logoUrl={`${import.meta.env.BASE_URL || ''}image/kaytuneai logo.png`}
       />
       <MainCanvas />
     </ErrorBoundary>

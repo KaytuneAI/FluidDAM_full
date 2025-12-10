@@ -75,7 +75,7 @@ export default function HomePage() {
       <div className="home-header">
         <div className="home-logo">
           <img 
-            src="/image/kaytuneai logo.png" 
+            src={`${import.meta.env.BASE_URL || ''}image/kaytuneai logo.png`}
             alt="Kaytune AI Logo" 
             className="logo-image"
             onError={(e) => {

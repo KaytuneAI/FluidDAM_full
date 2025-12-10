@@ -229,7 +229,7 @@ export default function IntegratedAssetSidebar({ editor, selectedFrame, setIsLoa
           marginBottom: 4
         }}>
           <img 
-            src={encodeURI("/image/kaytuneai logo.png")} 
+            src={encodeURI(`${import.meta.env.BASE_URL || ''}image/kaytuneai logo.png`)} 
             alt="Kaytune AI Logo" 
             style={{
               maxWidth: "100%",
