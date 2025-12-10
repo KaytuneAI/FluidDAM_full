@@ -6,6 +6,7 @@ import { toRichText } from 'tldraw';
 import storageManager from '../utils/storageManager.js';
 import SheetSelectionDialog from './SheetSelectionDialog.jsx';
 import { mapExcelColorToTL } from '../utils/colorMapper.js';
+import { getIconPath } from '../utils/iconPath.js';
 
 export default function LoadCanvasButton({ editor, setIsLoading }) {
   const fileInputRef = useRef(null);
@@ -1306,7 +1307,7 @@ export default function LoadCanvasButton({ editor, setIsLoading }) {
            justifyContent: "center"
          }}
         >
-          <img src={`${import.meta.env.BASE_URL || ''}icons/load_canvas.png`} alt="加载画布" style={{width: 32, height: 32}} />
+          <img src={getIconPath('icons/load_canvas.png')} alt="加载画布" style={{width: 32, height: 32}} />
         </button>
         
 

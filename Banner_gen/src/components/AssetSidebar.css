@@ -72,7 +72,8 @@
   cursor: pointer;
   transition: all 0.3s ease;
   position: relative;
-  overflow: hidden;
+  overflow: visible;
+  /* 允许内容向下延伸，不被裁剪 */
 }
 
 .asset-card:hover {
@@ -106,21 +107,25 @@
 
 .asset-thumb {
   width: 100%;
-  min-height: 60px;
-  max-height: 120px;
+  aspect-ratio: 1;
   overflow: hidden;
   border-radius: 6px;
   background: #f9fafb;
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
+  padding: 8px;
+  box-sizing: border-box;
 }
 
 .asset-thumb img {
   width: 100%;
-  height: auto;
+  height: 100%;
   object-fit: contain;
-  max-height: 120px;
+  display: block;
+  border-radius: 4px;
+  flex-shrink: 0;
 }
 
 .asset-error {

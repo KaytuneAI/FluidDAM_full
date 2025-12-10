@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import './AssetSidebar.css';
 import { BannerData } from '../types';
+import type { TempAsset } from '@shared/types/assets';
 
 interface AssetSidebarProps {
   jsonData: BannerData[];
   currentIndex: number;
   onAssetClick?: (assetUrl: string, fieldName: string) => void;
+  extraAssets?: TempAsset[];  // 来自 Link 的额外素材
+  sidebarWidth?: number;  // 素材栏宽度，用于计算图片尺寸
 }
 
 interface AssetItem {
@@ -19,14 +22,16 @@ export const AssetSidebar: React.FC<AssetSidebarProps> = ({
   jsonData,
   currentIndex,
   onAssetClick,
+  extraAssets = [],
+  sidebarWidth = 280,
 }) => {
   const [highlightedAsset, setHighlightedAsset] = useState<string | null>(null);
 
-  // 从 JSON 数据中提取所有图片素材
-  const assets = useMemo(() => {
+  // 合并 JSON 数据中的素材和来自 Link 的额外素材
+  const displayAssets = useMemo(() => {
     const assetMap = new Map<string, AssetItem>();
     
-    // 遍历所有 JSON 数据，提取图片字段
+    // 1. 从 JSON 数据中提取所有图片素材
     jsonData.forEach((data, index) => {
       Object.keys(data).forEach((key) => {
         const value = data[key];
@@ -82,17 +87,33 @@ export const AssetSidebar: React.FC<AssetSidebarProps> = ({
       });
     });
     
+    // 2. 添加来自 Link 的额外素材
+    extraAssets.forEach((asset, idx) => {
+      const src = asset.dataUrl ?? asset.url;
+      if (!src) return;
+      
+      // 使用 asset.id 作为 key，避免与 JSON 数据中的素材冲突
+      if (!assetMap.has(asset.id)) {
+        assetMap.set(asset.id, {
+          url: src,
+          fieldName: 'link-asset',
+          name: asset.name || `Link 素材 ${idx + 1}`,
+          isUsed: false, // Link 素材默认不在当前数据中使用
+        });
+      }
+    });
+    
     return Array.from(assetMap.values());
-  }, [jsonData, currentIndex]);
+  }, [jsonData, currentIndex, extraAssets]);
 
   // 高亮当前使用的素材
   useEffect(() => {
-    const usedAssets = assets.filter(a => a.isUsed);
+    const usedAssets = displayAssets.filter(a => a.isUsed);
     if (usedAssets.length > 0) {
       setHighlightedAsset(usedAssets[0].url);
       setTimeout(() => setHighlightedAsset(null), 2000);
     }
-  }, [currentIndex, assets]);
+  }, [currentIndex, displayAssets]);
 
   const handleAssetClick = (asset: AssetItem) => {
     setHighlightedAsset(asset.url);
@@ -106,17 +127,17 @@ export const AssetSidebar: React.FC<AssetSidebarProps> = ({
     <div className="asset-sidebar">
       <div className="asset-sidebar-header">
         <h3>素材库</h3>
-        <span className="asset-count">{assets.length} 个素材</span>
+        <span className="asset-count">{displayAssets.length} 个素材</span>
       </div>
       
       <div className="asset-sidebar-list">
-        {assets.length === 0 ? (
+        {displayAssets.length === 0 ? (
           <div className="asset-sidebar-empty">
             <p>暂无素材</p>
             <p className="hint">上传 JSON 数据后，图片素材将自动显示在这里</p>
           </div>
         ) : (
-          assets.map((asset) => {
+          displayAssets.map((asset) => {
             const isHighlighted = highlightedAsset === asset.url;
             return (
               <div
@@ -125,10 +146,23 @@ export const AssetSidebar: React.FC<AssetSidebarProps> = ({
                 onClick={() => handleAssetClick(asset)}
                 title={`${asset.fieldName}: ${asset.name}`}
               >
-                <div className="asset-thumb">
+                <div 
+                  className="asset-thumb"
+                  style={{
+                    width: '100%',
+                    aspectRatio: '1',
+                    maxHeight: `${sidebarWidth - 32}px`, // 减去 padding
+                  }}
+                >
                   <img
                     src={asset.url}
                     alt={asset.name}
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'contain',
+                      display: 'block',
+                    }}
                     onError={(e) => {
                       const target = e.target as HTMLImageElement;
                       target.style.display = 'none';

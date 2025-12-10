@@ -1,5 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import './LinkPage.css';
+import type { TempAsset } from '@shared/types/assets';
+import {
+  SessionBusKeys,
+  writeSessionPayload,
+  type LinkToBannerGenPayload,
+} from '@shared/utils/sessionBus';
+import { getBannerGenUrl } from '../../utils/navigation';
 
 interface ImageFile {
   file: File;
@@ -8,6 +15,7 @@ interface ImageFile {
   size: number;
   type: string;
   lastModified: number;
+  dataUrl?: string;   // 可选缓存 base64
 }
 
 export const LinkPage: React.FC = () => {
@@ -180,16 +188,62 @@ export const LinkPage: React.FC = () => {
     setSelectedIndices(new Set());
   };
 
-  // 导入SpotStudio
-  const handleImportToSpotStudio = () => {
+  // File → dataURL 的工具函数
+  const fileToDataUrl = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+
+  // 导入BannerGen（原导入SpotStudio功能已转移）
+  const handleImportToBannerGen = async () => {
     if (selectedIndices.size === 0) {
       alert('请先选择要导入的素材');
       return;
     }
-    const selectedImages = Array.from(selectedIndices).map(index => images[index]);
-    console.log('导入到SpotStudio:', selectedImages);
-    // TODO: 实现导入SpotStudio的具体逻辑
-    alert(`已选择 ${selectedIndices.size} 张图片，准备导入SpotStudio（功能待实现）`);
+
+    const selectedImages = Array.from(selectedIndices).map(i => images[i]);
+
+    const assets: TempAsset[] = await Promise.all(
+      selectedImages.map(async (img, index) => {
+        let dataUrl = img.dataUrl;
+        if (!dataUrl) {
+          dataUrl = await fileToDataUrl(img.file);
+          // 缓存到 images 中
+          setImages(prev => {
+            const updated = [...prev];
+            const imgIndex = updated.findIndex(i => i.file === img.file);
+            if (imgIndex >= 0) {
+              updated[imgIndex] = { ...updated[imgIndex], dataUrl };
+            }
+            return updated;
+          });
+        }
+
+        return {
+          id: `${Date.now()}-${index}`,
+          name: img.name,
+          dataUrl,
+          source: 'local-upload' as const,
+          mimeType: img.type,
+        };
+      })
+    );
+
+    const payload: LinkToBannerGenPayload = {
+      from: 'link',
+      createdAt: Date.now(),
+      assets,
+    };
+
+    writeSessionPayload(SessionBusKeys.LINK_TO_BANNERGEN, payload);
+
+    const baseUrl = getBannerGenUrl();
+    window.location.href = `${baseUrl}/banner-batch`;
   };
 
   // 上一张
@@ -368,11 +422,11 @@ export const LinkPage: React.FC = () => {
                       取消选择
                     </button>
                     <button 
-                      className="btn-import-spotstudio"
-                      onClick={handleImportToSpotStudio}
+                      className="btn-import-bannergen"
+                      onClick={handleImportToBannerGen}
                       disabled={selectedIndices.size === 0}
                     >
-                      导入SpotStudio {selectedIndices.size > 0 && `(${selectedIndices.size})`}
+                      导入BannerGen {selectedIndices.size > 0 && `(${selectedIndices.size})`}
                     </button>
                   </div>
                 </>

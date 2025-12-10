@@ -3,6 +3,7 @@ import { getSnapshot } from "tldraw";
 import { downloadJSON, showDownloadNotification } from '../utils/downloadUtils.js';
 import { getImageData } from '../utils/apiUtils.js';
 import { compressTo96DPI } from '../utils/dpiCompression.js';
+import { getIconPath } from '../utils/iconPath.js';
 
 export default function SaveCanvasButton({ editor }) {
   const saveCanvas = async () => {
@@ -137,7 +138,7 @@ export default function SaveCanvasButton({ editor }) {
          justifyContent: "center"
        }}
       >
-        <img src={`${import.meta.env.BASE_URL || ''}icons/save_canvas.png`} alt="保存画布" style={{width: 32, height: 32}} />
+        <img src={getIconPath('icons/save_canvas.png')} alt="保存画布" style={{width: 32, height: 32}} />
       </button>
   );
 }

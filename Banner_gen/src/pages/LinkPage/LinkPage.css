@@ -293,7 +293,7 @@
 
 .btn-select-all,
 .btn-deselect-all,
-.btn-import-spotstudio {
+.btn-import-bannergen {
   flex: 1;
   padding: 12px 20px;
   border: none;
@@ -316,18 +316,18 @@
   border-color: #d0d0d0;
 }
 
-.btn-import-spotstudio {
+.btn-import-bannergen {
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
   box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
 }
 
-.btn-import-spotstudio:hover:not(:disabled) {
+.btn-import-bannergen:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
 }
 
-.btn-import-spotstudio:disabled {
+.btn-import-bannergen:disabled {
   opacity: 0.5;
   cursor: not-allowed;
   background: #ccc;

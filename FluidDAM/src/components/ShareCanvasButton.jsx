@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { getSnapshot } from "tldraw";
 import { getImageData, getApiBaseUrl } from '../utils/apiUtils.js';
+import { getIconPath } from '../utils/iconPath.js';
 
 export default function ShareCanvasButton({ editor }) {
   const [isSharing, setIsSharing] = useState(false);
@@ -281,7 +282,7 @@ export default function ShareCanvasButton({ editor }) {
             animation: "spin 1s linear infinite"
           }} />
         ) : (
-          <img src={`${import.meta.env.BASE_URL || ''}icons/share_canvas.png`} alt="分享画布" style={{width: 32, height: 32}} />
+          <img src={getIconPath('icons/share_canvas.png')} alt="分享画布" style={{width: 32, height: 32}} />
         )}
       </button>
 

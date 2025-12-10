@@ -4,6 +4,7 @@ import { placeAssetIntoSelectedFrame } from '../utils/assetUtils.js';
 import { syncImagesBySKU } from '../utils/skuUtils.js';
 import storageManager from '../utils/storageManager.js';
 import { getSnapshot } from 'tldraw';
+import { getIconPath } from '../utils/iconPath.js';
 
 export default function InsertImageButton({ editor, selectedFrame }) {
   const fileInputRef = useRef(null);
@@ -416,7 +417,7 @@ export default function InsertImageButton({ editor, selectedFrame }) {
            justifyContent: "center"
          }}
         >
-          <img src={`${import.meta.env.BASE_URL || ''}icons/load_image.png`} alt="插入图片" style={{width: 32, height: 32}} />
+          <img src={getIconPath('icons/load_image.png')} alt="插入图片" style={{width: 32, height: 32}} />
         </button>
 
       {/* 拖拽区域 */}

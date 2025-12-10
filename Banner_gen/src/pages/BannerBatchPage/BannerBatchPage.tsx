@@ -15,6 +15,13 @@ import { parseMultiRowProducts } from "../../utils/multiRowProductParser";
 import { parseRowPerSkuProducts } from "../../utils/rowPerSkuProductParser";
 import { ProductBlock } from "../../types";
 import { AssetSidebar } from "../../components/AssetSidebar";
+import { ResizableSidebar } from "../../components/ResizableSidebar";
+import type { TempAsset } from "@shared/types/assets";
+import {
+  readSessionPayload,
+  SessionBusKeys,
+  type LinkToBannerGenPayload,
+} from "@shared/utils/sessionBus";
 import "./BannerBatchPage.css";
 
 export const BannerBatchPage: React.FC = () => {
@@ -49,6 +56,13 @@ export const BannerBatchPage: React.FC = () => {
     fields: TemplateField[];
     fileName: string;
   } | null>(null);
+  
+  // 来自 Link 的素材
+  const [linkedAssets, setLinkedAssets] = useState<TempAsset[]>([]);
+  
+  // 素材面板宽度和收起状态
+  const [assetSidebarWidth, setAssetSidebarWidth] = useState(280);
+  const [assetSidebarCollapsed, setAssetSidebarCollapsed] = useState(false);
   
   // 获取当前活动的索引（单图用 currentIndex，多图用 selectedBannerIndex）
   const getActiveIndex = useCallback(() => {
@@ -85,6 +99,21 @@ export const BannerBatchPage: React.FC = () => {
   useEffect(() => {
     jsonDataRef.current = jsonData;
   }, [jsonData]);
+
+  // 初始化时读取来自 Link 的素材
+  useEffect(() => {
+    const payload = readSessionPayload<LinkToBannerGenPayload>(
+      SessionBusKeys.LINK_TO_BANNERGEN,
+    );
+
+    if (payload && payload.from === 'link') {
+      setLinkedAssets(payload.assets);
+      console.log('Imported assets from Link:', payload.assets);
+      if (payload.assets.length > 0) {
+        setSuccess(`已从 Link 导入 ${payload.assets.length} 个素材`);
+      }
+    }
+  }, []);
 
   // 将模板 CSS 中的 @font-face 规则注入到顶层文档，确保 html-to-image 能识别字体
   useEffect(() => {
@@ -1987,18 +2016,29 @@ export const BannerBatchPage: React.FC = () => {
         </div>
 
         {/* 右侧素材面板 */}
-        <div className="banner-asset-sidebar">
-          <AssetSidebar
-            jsonData={jsonData}
-            currentIndex={currentIndex}
-            onAssetClick={(assetUrl, fieldName) => {
-              // 点击素材时，可以高亮对应的字段
-              if (templateFields.some(f => f.name === fieldName)) {
-                handleFieldClick(fieldName);
-                updateFieldValue(fieldName, assetUrl);
-              }
-            }}
-          />
+        <div className="banner-asset-sidebar-wrapper">
+          <ResizableSidebar
+            width={assetSidebarCollapsed ? 0 : assetSidebarWidth}
+            onWidthChange={setAssetSidebarWidth}
+            collapsed={assetSidebarCollapsed}
+            onToggleCollapse={() => setAssetSidebarCollapsed(!assetSidebarCollapsed)}
+          >
+            <div className="banner-asset-sidebar">
+              <AssetSidebar
+                jsonData={jsonData}
+                currentIndex={currentIndex}
+                extraAssets={linkedAssets}
+                sidebarWidth={assetSidebarWidth}
+                onAssetClick={(assetUrl, fieldName) => {
+                  // 点击素材时，可以高亮对应的字段
+                  if (templateFields.some(f => f.name === fieldName)) {
+                    handleFieldClick(fieldName);
+                    updateFieldValue(fieldName, assetUrl);
+                  }
+                }}
+              />
+            </div>
+          </ResizableSidebar>
         </div>
       </div>
     </div>

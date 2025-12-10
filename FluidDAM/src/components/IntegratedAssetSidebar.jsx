@@ -7,6 +7,7 @@ import SaveCanvasButton from './SaveCanvasButton.jsx';
 import ShareCanvasButton from './ShareCanvasButton.jsx';
 import FormatBrushButton from './FormatBrushButton.jsx';
 import BatchReplaceButton from './BatchReplaceButton.jsx';
+import { getIconPath } from '../utils/iconPath.js';
 
 export default function IntegratedAssetSidebar({ editor, selectedFrame, setIsLoading, platform = "TM", width, onReset, collapsed, onToggleCollapse, onScrollToAsset }) {
   const [usedAssetIds, setUsedAssetIds] = useState(new Set());
@@ -229,7 +230,7 @@ export default function IntegratedAssetSidebar({ editor, selectedFrame, setIsLoa
           marginBottom: 4
         }}>
           <img 
-            src={encodeURI(`${import.meta.env.BASE_URL || ''}image/kaytuneai logo.png`)} 
+            src={encodeURI(getIconPath('image/kaytuneai logo.png'))} 
             alt="Kaytune AI Logo" 
             style={{
               maxWidth: "100%",
@@ -250,7 +251,7 @@ export default function IntegratedAssetSidebar({ editor, selectedFrame, setIsLoa
           <LoadCanvasButton editor={editor} setIsLoading={setIsLoading} />
           <SaveCanvasButton editor={editor} />
           <ShareCanvasButton editor={editor} />
-          <FormatBrushButton editor={editor} iconSrc={`${import.meta.env.BASE_URL || ''}icons/resize.png`} />
+          <FormatBrushButton editor={editor} iconSrc={getIconPath('icons/resize.png')} />
           <button 
             onClick={onReset}
             style={{
@@ -272,7 +273,7 @@ export default function IntegratedAssetSidebar({ editor, selectedFrame, setIsLoa
             }}
             title="重置画布 (Ctrl+R)"
           >
-            <img src={`${import.meta.env.BASE_URL || ''}icons/reset.png`} alt="重置画布" style={{width: 32, height: 32}} />
+            <img src={getIconPath('icons/reset.png')} alt="重置画布" style={{width: 32, height: 32}} />
           </button>
         </div>
       </div>

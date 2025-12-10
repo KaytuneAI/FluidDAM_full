@@ -3,6 +3,7 @@ import MainCanvas from "./MainCanvas";
 import ErrorBoundary from "./ErrorBoundary";
 import { FloatingMenu } from "./components/FloatingMenu";
 import { navigateToLink, navigateToBannerGen, navigateToHome } from "./utils/navigation";
+import { getIconPath } from "./utils/iconPath.js";
 
 export default function App() {
   const handleNavigateToLink = () => {
@@ -49,7 +50,7 @@ export default function App() {
           },
         ]}
         triggerHeight={60}
-        logoUrl={`${import.meta.env.BASE_URL || ''}image/kaytuneai logo.png`}
+        logoUrl={getIconPath('image/kaytuneai logo.png')}
       />
       <MainCanvas />
     </ErrorBoundary>
