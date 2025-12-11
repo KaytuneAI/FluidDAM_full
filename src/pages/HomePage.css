@@ -34,7 +34,7 @@
 }
 
 .home-container {
-  max-width: 900px;
+  max-width: 1400px;
   width: 100%;
   margin: 0 auto;
   padding: 80px 40px 60px;
@@ -160,17 +160,24 @@
 }
 
 .app-buttons {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 20px;
-  margin-top: 80px;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 30px;
+  margin-top: 120px;
+  justify-content: center;
+}
+
+.app-button {
+  flex: 1;
+  min-width: 0;
+  max-width: 384px;
 }
 
 .app-button {
   background: rgba(255, 255, 255, 0.9);
   border: 2px solid rgba(102, 126, 234, 0.3);
   border-radius: 16px;
-  padding: 32px 28px;
+  padding: 32px 32px;
   cursor: pointer;
   transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
   text-align: center;
@@ -178,7 +185,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 10px;
   box-shadow: 0 4px 12px rgba(102, 126, 234, 0.12);
   position: relative;
   overflow: hidden;
@@ -232,7 +239,8 @@
 
 .app-button-banner:hover,
 .app-button-fluiddam:hover,
-.app-button-link:hover {
+.app-button-link:hover,
+.app-button-templategen:hover {
   color: white;
   border-color: transparent;
 }
@@ -245,9 +253,9 @@
 }
 
 .button-content h2 {
-  font-size: 26px;
+  font-size: 28px;
   font-weight: 700;
-  margin: 0 0 8px 0;
+  margin: 0 0 10px 0;
   color: #333;
   transition: all 0.4s ease;
   letter-spacing: 0.5px;
@@ -265,7 +273,7 @@
 }
 
 .button-content p {
-  font-size: 16px;
+  font-size: 17px;
   margin: 0;
   color: #666;
   line-height: 1.6;

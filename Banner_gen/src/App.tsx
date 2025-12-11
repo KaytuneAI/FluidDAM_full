@@ -1,8 +1,9 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { BannerBatchPage } from "./pages/BannerBatchPage";
 import { LinkPage } from "./pages/LinkPage";
+import { TemplateGenPage } from "./pages/TemplateGenPage";
 import { FloatingMenu } from "./components/FloatingMenu";
-import { navigateToLink, navigateToFluidDAM, navigateToHome } from "./utils/navigation";
+import { navigateToLink, navigateToFluidDAM, navigateToHome, navigateToTemplateGen } from "./utils/navigation";
 import "./App.css";
 
 function AppContent() {
@@ -32,9 +33,14 @@ function AppContent() {
     navigateToHome();
   };
 
+  const handleNavigateToTemplateGen = () => {
+    window.location.href = `${basename}/template-gen`;
+  };
+
   // 判断当前页面
   const isLinkPage = location.pathname.includes('/link');
   const isBannerGenPage = location.pathname.includes('/banner-batch');
+  const isTemplateGenPage = location.pathname.includes('/template-gen');
   
   return (
     <>
@@ -50,6 +56,12 @@ function AppContent() {
             description: '素材链接',
             onClick: handleNavigateToLink,
             active: isLinkPage,
+          },
+          {
+            label: 'TemplateGen',
+            description: '模板生成器',
+            onClick: handleNavigateToTemplateGen,
+            active: isTemplateGenPage,
           },
           {
             label: 'BannerGen',
@@ -71,6 +83,7 @@ function AppContent() {
         <Route path="/" element={<Navigate to="/banner-batch" replace />} />
         <Route path="/banner-batch" element={<BannerBatchPage />} />
         <Route path="/link" element={<LinkPage />} />
+        <Route path="/template-gen" element={<TemplateGenPage />} />
       </Routes>
     </>
   );

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { navigateToBannerGen, navigateToFluidDAM, navigateToLink } from "../utils/navigation";
+import { navigateToBannerGen, navigateToFluidDAM, navigateToLink, navigateToTemplateGen } from "../utils/navigation";
 import "./HomePage.css";
 
 export default function HomePage() {
@@ -10,7 +10,8 @@ export default function HomePage() {
     { product: "FluidDAM", description: "管理素材，生产全链路智能化。" },
     { product: "LinkDAM", description: "一键接入品牌 DAM，素材随取随用" },
     { product: "SpotStudio", description: "用数据驱动画布，用画布驱动决策" },
-    { product: "BannerGen", description: "SKU 级批量生成电商素材的自动化生产线" }
+    { product: "BannerGen", description: "高定高速，SKU电商素材批量生成" },
+    { product: "TemplateGen", description: "自由搭建，万能模板" }
   ];
   
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -70,6 +71,11 @@ export default function HomePage() {
     navigateToLink();
   };
 
+  const handleNavigateToTemplateGen = () => {
+    // In development, use direct port; in production, use directory path
+    navigateToTemplateGen();
+  };
+
   return (
     <div className="home-page">
       <div className="home-header">
@@ -105,6 +111,26 @@ export default function HomePage() {
         
         <div className="app-buttons">
           <button 
+            className="app-button app-button-link"
+            onClick={handleNavigateToLink}
+          >
+            <div className="button-content">
+              <h2>Link</h2>
+              <p>素材链接与管理</p>
+            </div>
+          </button>
+
+          <button 
+            className="app-button app-button-templategen"
+            onClick={handleNavigateToTemplateGen}
+          >
+            <div className="button-content">
+              <h2>Template Generator</h2>
+              <p>自由模板创建中心</p>
+            </div>
+          </button>
+
+          <button 
             className="app-button app-button-banner"
             onClick={handleNavigateToBannerGen}
           >
@@ -121,16 +147,6 @@ export default function HomePage() {
             <div className="button-content">
               <h2>SpotStudio</h2>
               <p>交互式画布和素材管理</p>
-            </div>
-          </button>
-
-          <button 
-            className="app-button app-button-link"
-            onClick={handleNavigateToLink}
-          >
-            <div className="button-content">
-              <h2>Link</h2>
-              <p>素材链接与管理</p>
             </div>
           </button>
         </div>

@@ -2,7 +2,7 @@ import React from "react";
 import MainCanvas from "./MainCanvas";
 import ErrorBoundary from "./ErrorBoundary";
 import { FloatingMenu } from "./components/FloatingMenu";
-import { navigateToLink, navigateToBannerGen, navigateToHome } from "./utils/navigation";
+import { navigateToLink, navigateToBannerGen, navigateToHome, navigateToTemplateGen } from "./utils/navigation";
 import { getIconPath } from "./utils/iconPath.js";
 
 export default function App() {
@@ -21,6 +21,10 @@ export default function App() {
 
   const handleNavigateToHome = () => {
     navigateToHome();
+  };
+
+  const handleNavigateToTemplateGen = () => {
+    navigateToTemplateGen();
   };
 
   // 检查是否在 SpotStudio 模式
@@ -43,6 +47,11 @@ export default function App() {
               label: 'Link',
               description: '素材链接',
               onClick: handleNavigateToLink,
+            },
+            {
+              label: 'TemplateGen',
+              description: '模板生成器',
+              onClick: handleNavigateToTemplateGen,
             },
             {
               label: 'BannerGen',

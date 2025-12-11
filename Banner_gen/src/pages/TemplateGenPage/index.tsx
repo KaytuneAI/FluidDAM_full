@@ -1,0 +1,2 @@
+export { TemplateGenPage } from './TemplateGenPage';
+

@@ -91,3 +91,23 @@ export function navigateToHome(): void {
   window.location.href = getHomeUrl();
 }
 
+/**
+ * Get the TemplateGen page URL
+ */
+export function getTemplateGenUrl(): string {
+  if (isProductionMode()) {
+    return '/bannergen/template-gen';
+  }
+  
+  // Development mode: use direct port
+  const baseUrl = import.meta.env.VITE_BANNER_GEN_URL || 'http://localhost:5174';
+  return `${baseUrl}/template-gen`;
+}
+
+/**
+ * Navigate to TemplateGen page
+ */
+export function navigateToTemplateGen(): void {
+  window.location.href = getTemplateGenUrl();
+}
+
