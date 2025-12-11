@@ -16,6 +16,8 @@ export interface ZipProcessResult {
   fields: TemplateField[];
   jsonData: BannerData[];
   successMessage: string;
+  htmlFileName?: string;
+  cssFileName?: string;
 }
 
 /**
@@ -268,12 +270,20 @@ export const processZipFile = async (file: File): Promise<ZipProcessResult> => {
     successMsg += ` (发现 ${fieldMap.size} 个可编辑字段)`;
   }
 
+  // 获取文件名
+  const htmlFileName = mainHtmlEntry.name.split("/").pop() || mainHtmlEntry.name;
+  const cssFileName = cssFiles.length > 0 
+    ? cssFiles.map(f => f.name.split("/").pop() || f.name).join(", ")
+    : undefined;
+
   return {
     html: finalHtml,
     css: processedCss, // 返回处理过的 CSS（字体路径已转换为 base64），用于注入顶层文档
     fields: Array.from(fieldMap.values()),
     jsonData: processedJsonData,
     successMessage: successMsg,
+    htmlFileName,
+    cssFileName,
   };
 };
 
