@@ -24,7 +24,7 @@ export interface BannerGenPersistedData {
     name: string;
     url?: string;
     dataUrl?: string;
-    source: string;
+    source: 'local-upload' | 'external-url' | 'dam-api';
     damId?: string;
     mimeType?: string;
     width?: number;

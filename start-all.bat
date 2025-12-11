@@ -29,9 +29,11 @@ if not exist "FluidDAM\node_modules" (
     echo.
 )
 
-echo Starting FluidDAM Backend API Server (Port 3001)...
+echo Starting Unified Backend API Server (Port 3001)...
+echo   - FluidDAM API
+echo   - Banner_gen API
 cd /d "%~dp0FluidDAM"
-start "FluidDAM API Server" cmd /k "cd /d %~dp0FluidDAM && npm run server"
+start "Unified API Server" cmd /k "cd /d %~dp0FluidDAM && npm run server"
 
 timeout /t 2 /nobreak >nul
 
@@ -66,7 +68,7 @@ echo.
 echo Standalone Access (for development/debugging):
 echo   - Banner_gen: http://localhost:5174
 echo   - FluidDAM: http://localhost:5173
-echo   - API: http://localhost:3001
+echo   - Unified API: http://localhost:3001 (FluidDAM + Banner_gen)
 echo.
 echo Tip: Recommended to use unified entry - only one port to remember!
 echo.

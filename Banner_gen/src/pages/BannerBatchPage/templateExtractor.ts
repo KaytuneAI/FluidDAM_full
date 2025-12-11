@@ -1,7 +1,7 @@
 /**
  * 从 HTML 模板中提取所有 data-field 的值
  */
-import type { BannerData } from '../types';
+import type { BannerData } from '../types/index';
 
 export function extractTemplateDataFields(html: string): BannerData {
   const templateData: BannerData = {};

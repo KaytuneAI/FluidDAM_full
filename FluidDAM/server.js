@@ -2,6 +2,7 @@ import express from 'express'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import multer from 'multer'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -191,10 +192,29 @@ if (!fs.existsSync(sharesDir)) {
 // 分享配置
 const SHARE_CONFIG = {
   maxFiles: 100,           // 最多100个分享文件
-  maxStorageMB: 200,       // 最多200MB存储
+  maxStorageMB: 500,       // 最多500MB存储（包含ZIP文件）
   expireHours: 24,         // 24小时过期
   cleanupInterval: 2 * 60 * 60 * 1000 // 每2小时清理一次
 };
+
+// 配置multer用于Banner ZIP文件上传
+const bannerZipStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, sharesDir)
+  },
+  filename: (req, file, cb) => {
+    const shareId = `banner-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
+    req.bannerShareId = shareId
+    cb(null, `${shareId}.zip`)
+  }
+})
+
+const bannerZipUpload = multer({
+  storage: bannerZipStorage,
+  limits: {
+    fileSize: 200 * 1024 * 1024 // 200MB限制
+  }
+})
 
 // 自动清理过期分享文件
 function cleanupExpiredShares() {
@@ -210,7 +230,8 @@ function cleanupExpiredShares() {
     let deletedCount = 0;
     
     files.forEach(file => {
-      if (file.endsWith('.json')) {
+      // 同时处理 JSON 和 ZIP 文件
+      if (file.endsWith('.json') || file.endsWith('.zip')) {
         const filePath = path.join(sharesDir, file);
         const stats = fs.statSync(filePath);
         const fileAge = now - stats.mtime.getTime();
@@ -233,7 +254,7 @@ function cleanupExpiredShares() {
       console.log(`超过限制，开始删除旧文件 (文件数: ${fileCount}/${SHARE_CONFIG.maxFiles}, 大小: ${(totalSize / 1024 / 1024).toFixed(2)}MB/${SHARE_CONFIG.maxStorageMB}MB)`);
       
       const sortedFiles = files
-        .filter(file => file.endsWith('.json'))
+        .filter(file => file.endsWith('.json') || file.endsWith('.zip'))
         .map(file => ({
           name: file,
           path: path.join(sharesDir, file),
@@ -387,36 +408,114 @@ app.post('/api/share-canvas', (req, res) => {
   }
 })
 
-// 获取分享的画布数据
+// 获取分享的画布数据或ZIP文件
 app.get('/api/get-share/:shareId', (req, res) => {
   try {
     const shareId = req.params.shareId
-    const fileName = `${shareId}.json`
-    const filePath = path.join(sharesDir, fileName)
     
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ success: false, message: '分享不存在或已过期' })
+    // 先尝试 JSON 文件（画布数据）
+    const jsonFileName = `${shareId}.json`
+    const jsonFilePath = path.join(sharesDir, jsonFileName)
+    
+    if (fs.existsSync(jsonFilePath)) {
+      // 检查是否过期
+      const stats = fs.statSync(jsonFilePath)
+      const now = Date.now()
+      const expireTime = SHARE_CONFIG.expireHours * 60 * 60 * 1000
+      
+      if (now - stats.mtime.getTime() > expireTime) {
+        // 删除过期文件
+        fs.unlinkSync(jsonFilePath)
+        return res.status(404).json({ success: false, message: '分享已过期' })
+      }
+      
+      // 读取分享数据
+      const fileContent = fs.readFileSync(jsonFilePath, 'utf8')
+      const shareData = JSON.parse(fileContent)
+      
+      return res.json({ success: true, data: shareData })
     }
     
-    // 检查是否过期
-    const stats = fs.statSync(filePath)
-    const now = Date.now()
-    const expireTime = SHARE_CONFIG.expireHours * 60 * 60 * 1000
+    // 再尝试 ZIP 文件（Banner ZIP）
+    const zipFileName = `${shareId}.zip`
+    const zipFilePath = path.join(sharesDir, zipFileName)
     
-    if (now - stats.mtime.getTime() > expireTime) {
-      // 删除过期文件
-      fs.unlinkSync(filePath)
-      return res.status(404).json({ success: false, message: '分享已过期' })
+    if (fs.existsSync(zipFilePath)) {
+      // 检查是否过期
+      const stats = fs.statSync(zipFilePath)
+      const now = Date.now()
+      const expireTime = SHARE_CONFIG.expireHours * 60 * 60 * 1000
+      
+      if (now - stats.mtime.getTime() > expireTime) {
+        // 删除过期文件
+        fs.unlinkSync(zipFilePath)
+        return res.status(404).json({ success: false, message: '分享已过期' })
+      }
+      
+      // 设置响应头，让浏览器下载文件
+      res.setHeader('Content-Type', 'application/zip')
+      res.setHeader('Content-Disposition', `attachment; filename="${shareId}.zip"`)
+      
+      // 发送文件
+      return res.sendFile(zipFilePath)
     }
     
-    // 读取分享数据
-    const fileContent = fs.readFileSync(filePath, 'utf8')
-    const shareData = JSON.parse(fileContent)
-    
-    res.json({ success: true, data: shareData })
+    // 文件不存在
+    return res.status(404).json({ success: false, message: '分享不存在或已过期' })
   } catch (error) {
     console.error('获取分享数据时出错:', error)
     res.status(500).json({ success: false, message: '获取分享失败', error: error.message })
+  }
+})
+
+// 上传Banner ZIP文件并生成分享链接
+app.post('/api/share-banner-zip', bannerZipUpload.single('zipFile'), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: '未上传文件' })
+    }
+    
+    const shareId = req.bannerShareId || (req.file ? req.file.filename.replace('.zip', '') : null)
+    
+    if (!shareId) {
+      return res.status(400).json({ success: false, message: '无法生成分享ID' })
+    }
+    
+    // 生成分享链接 - 支持Nginx反向代理
+    const protocol = req.protocol
+    const host = req.get('host')
+    
+    // 检查是否通过Nginx反向代理访问
+    const xForwardedHost = req.get('x-forwarded-host')
+    const xForwardedProto = req.get('x-forwarded-proto')
+    
+    let shareUrl
+    if (xForwardedHost && xForwardedProto) {
+      // 使用Nginx反向代理的地址
+      shareUrl = `${xForwardedProto}://${xForwardedHost}/api/get-share/${shareId}`
+    } else {
+      // 直接访问，分享链接应该直接指向API服务器（3001端口），而不是前端服务器
+      // 这样可以直接下载文件，不会被React Router拦截
+      shareUrl = `${protocol}://${host}/api/get-share/${shareId}`
+    }
+    
+    log('INFO', 'Banner ZIP分享成功', {
+      shareId: shareId,
+      shareUrl: shareUrl,
+      dataSize: req.file.size
+    })
+    
+    res.json({
+      success: true,
+      shareId: shareId,
+      shareUrl: shareUrl,
+      downloadUrl: shareUrl, // 下载链接和分享链接相同
+      message: '分享成功',
+      expiresAt: new Date(Date.now() + SHARE_CONFIG.expireHours * 60 * 60 * 1000).toISOString()
+    })
+  } catch (error) {
+    log('ERROR', '分享Banner ZIP时出错', { error: error.message })
+    res.status(500).json({ success: false, message: '分享失败', error: error.message })
   }
 })
 
@@ -650,6 +749,90 @@ app.get('/api/logs/files', (req, res) => {
   } catch (error) {
     log('ERROR', '获取日志文件列表时出错', { error: error.message, stack: error.stack });
     res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// 临时存储 Link 到 SpotStudio 的素材数据（跨端口传输）
+const linkToSpotTempStorage = new Map(); // 内存临时存储
+const LINK_TO_SPOT_EXPIRE_TIME = 5 * 60 * 1000; // 5分钟过期
+
+// 保存 Link 到 SpotStudio 的素材数据
+app.post('/api/link-to-spot-assets', (req, res) => {
+  log('INFO', '收到 Link 素材数据请求', { 
+    method: req.method, 
+    url: req.url,
+    contentType: req.get('content-type'),
+    contentLength: req.get('content-length')
+  });
+  
+  try {
+    const { assets } = req.body;
+    
+    log('INFO', '解析请求体', { 
+      hasBody: !!req.body,
+      hasAssets: !!assets,
+      assetsType: Array.isArray(assets) ? 'array' : typeof assets,
+      assetsLength: Array.isArray(assets) ? assets.length : 'N/A'
+    });
+    
+    if (!assets || !Array.isArray(assets) || assets.length === 0) {
+      log('WARN', '无效的素材数据', { assets });
+      return res.status(400).json({ success: false, message: '无效的素材数据' });
+    }
+
+    const token = `link-to-spot-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+    linkToSpotTempStorage.set(token, {
+      assets,
+      createdAt: Date.now(),
+    });
+
+    // 5分钟后自动清理
+    setTimeout(() => {
+      linkToSpotTempStorage.delete(token);
+    }, LINK_TO_SPOT_EXPIRE_TIME);
+
+    log('INFO', 'Link 素材数据已临时存储', { token, assetCount: assets.length });
+
+    res.json({
+      success: true,
+      token,
+      message: '素材数据已保存',
+    });
+  } catch (error) {
+    log('ERROR', '保存 Link 素材数据时出错', { error: error.message, stack: error.stack });
+    res.status(500).json({ success: false, message: '保存失败', error: error.message });
+  }
+});
+
+// 获取 Link 到 SpotStudio 的素材数据
+app.get('/api/link-to-spot-assets/:token', (req, res) => {
+  try {
+    const { token } = req.params;
+    const data = linkToSpotTempStorage.get(token);
+
+    if (!data) {
+      return res.status(404).json({ success: false, message: '数据不存在或已过期' });
+    }
+
+    // 检查是否过期
+    const now = Date.now();
+    if (now - data.createdAt > LINK_TO_SPOT_EXPIRE_TIME) {
+      linkToSpotTempStorage.delete(token);
+      return res.status(404).json({ success: false, message: '数据已过期' });
+    }
+
+    // 删除已使用的数据
+    linkToSpotTempStorage.delete(token);
+
+    log('INFO', 'Link 素材数据已获取', { token, assetCount: data.assets.length });
+
+    res.json({
+      success: true,
+      assets: data.assets,
+    });
+  } catch (error) {
+    log('ERROR', '获取 Link 素材数据时出错', { error: error.message });
+    res.status(500).json({ success: false, message: '获取失败', error: error.message });
   }
 });
 

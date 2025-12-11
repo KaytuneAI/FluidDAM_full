@@ -5,8 +5,10 @@ import {
   SessionBusKeys,
   writeSessionPayload,
   type LinkToBannerGenPayload,
+  type LinkToSpotPayload,
 } from '@shared/utils/sessionBus';
-import { getBannerGenUrl } from '../../utils/navigation';
+import { getBannerGenUrl, getFluidDAMUrl } from '../../utils/navigation';
+import { getApiBaseUrl } from '../../utils/apiUtils';
 
 interface ImageFile {
   file: File;
@@ -246,6 +248,135 @@ export const LinkPage: React.FC = () => {
     window.location.href = `${baseUrl}/banner-batch`;
   };
 
+  // 导入SpotStudio
+  const handleImportToSpotStudio = async () => {
+    if (selectedIndices.size === 0) {
+      alert('请先选择要导入的素材');
+      return;
+    }
+
+    const selectedImages = Array.from(selectedIndices).map(i => images[i]);
+
+    const assets: TempAsset[] = await Promise.all(
+      selectedImages.map(async (img, index) => {
+        let dataUrl = img.dataUrl;
+        if (!dataUrl) {
+          dataUrl = await fileToDataUrl(img.file);
+          // 缓存到 images 中
+          setImages(prev => {
+            const updated = [...prev];
+            const imgIndex = updated.findIndex(i => i.file === img.file);
+            if (imgIndex >= 0) {
+              updated[imgIndex] = { ...updated[imgIndex], dataUrl };
+            }
+            return updated;
+          });
+        }
+
+        return {
+          id: `${Date.now()}-${index}`,
+          name: img.name,
+          dataUrl,
+          source: 'local-upload' as const,
+          mimeType: img.type,
+        };
+      })
+    );
+
+    const payload: LinkToSpotPayload = {
+      from: 'link',
+      createdAt: Date.now(),
+      assets,
+    };
+
+    // 检查是否通过统一入口访问（端口 3000）
+    const currentPort = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+    const isUnifiedEntry = currentPort === '3000' || currentPort === '';
+    console.log('=== 导入 SpotStudio 开始 ===');
+    console.log('当前域名:', window.location.origin);
+    console.log('当前端口:', currentPort);
+    console.log('是否通过统一入口访问:', isUnifiedEntry);
+    console.log('素材数量:', payload.assets.length);
+    
+    let targetUrl: string;
+    
+    if (isUnifiedEntry) {
+      // 通过统一入口，使用 sessionStorage（同域名可以共享）
+      const key = SessionBusKeys.LINK_TO_SPOT;
+      writeSessionPayload(key, payload);
+      console.log('✅ 素材数据已保存到 sessionStorage:', key, payload.assets.length, '个素材');
+      targetUrl = '/spotstudio';
+      console.log('使用相对路径跳转:', targetUrl);
+    } else {
+      // 直接访问不同端口，通过 API 服务器临时存储
+      console.log('跨端口访问，使用 API 服务器临时存储...');
+      console.log('素材数量:', payload.assets.length);
+      console.log('素材数据大小:', JSON.stringify(payload.assets).length, '字符');
+      
+      try {
+        // 获取 API 地址
+        const apiBaseUrl = getApiBaseUrl();
+        
+        if (!apiBaseUrl) {
+          throw new Error('无法获取 API 地址');
+        }
+        
+        console.log('API 地址:', apiBaseUrl);
+        console.log('准备上传素材数据到:', `${apiBaseUrl}/api/link-to-spot-assets`);
+        
+        // 上传素材数据到服务器
+        const response = await fetch(`${apiBaseUrl}/api/link-to-spot-assets`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ assets: payload.assets }),
+        });
+        
+        console.log('API 响应状态:', response.status, response.statusText);
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error('API 响应错误:', errorText);
+          throw new Error(`HTTP错误: ${response.status} - ${errorText}`);
+        }
+        
+        const result = await response.json();
+        console.log('API 响应结果:', result);
+        
+        if (!result.success || !result.token) {
+          throw new Error(result.message || '保存失败');
+        }
+        
+        console.log('✅ 素材数据已保存到服务器，token:', result.token);
+        
+        // 将 token 作为 URL 参数传递
+        targetUrl = getFluidDAMUrl();
+        const url = new URL(targetUrl, window.location.href);
+        url.searchParams.set('linkAssets', result.token);
+        targetUrl = url.toString();
+        
+        console.log('使用完整 URL 跳转（带 token）:', targetUrl);
+        console.log('跳转 URL 参数:', url.searchParams.toString());
+      } catch (error: any) {
+        console.error('❌ 通过 API 保存素材数据失败:', error);
+        console.error('错误详情:', error.message, error.stack);
+        alert(`保存素材数据失败：${error.message}\n\n请尝试通过统一入口（端口 3000）访问，或检查 API 服务器是否运行`);
+        return;
+      }
+    }
+    
+    console.log('=== 导入 SpotStudio 结束 ===');
+    console.log('最终跳转 URL:', targetUrl);
+    console.log('准备跳转到 SpotStudio...');
+    
+    // 延迟一下，确保数据保存完成
+    setTimeout(() => {
+      console.log('执行跳转，目标 URL:', targetUrl);
+      window.location.href = targetUrl;
+    }, 100);
+  };
+
   // 上一张
   const handlePrev = () => {
     if (selectedIndex > 0) {
@@ -427,6 +558,13 @@ export const LinkPage: React.FC = () => {
                       disabled={selectedIndices.size === 0}
                     >
                       导入BannerGen {selectedIndices.size > 0 && `(${selectedIndices.size})`}
+                    </button>
+                    <button 
+                      className="btn-import-spotstudio"
+                      onClick={handleImportToSpotStudio}
+                      disabled={selectedIndices.size === 0}
+                    >
+                      导入SpotStudio {selectedIndices.size > 0 && `(${selectedIndices.size})`}
                     </button>
                   </div>
                 </>

@@ -2,25 +2,38 @@
 
 // 动态获取API基础URL
 export function getApiBaseUrl() {
-  // 检查是否有自定义API地址
-  const customApiUrl = window.FLUIDDAM_API_URL || process.env.REACT_APP_API_URL;
+  // 检查是否有自定义API地址（使用 Vite 的环境变量方式）
+  const customApiUrl = window.FLUIDDAM_API_URL || import.meta.env.VITE_API_URL;
   if (customApiUrl) {
+    console.log('[FluidDAM getApiBaseUrl] 使用自定义 API 地址:', customApiUrl);
     return customApiUrl;
   }
   
   // 在开发环境中
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
     const port = window.location.port;
+    const fullUrl = window.location.href;
+    
+    console.log('[FluidDAM getApiBaseUrl] 当前 URL:', fullUrl);
+    console.log('[FluidDAM getApiBaseUrl] 当前端口:', port);
     
     // 如果通过统一入口（端口 3000）访问，使用相对路径让 vite 代理转发
     if (port === '3000' || port === '') {
+      console.log('[FluidDAM getApiBaseUrl] 使用统一入口，返回相对路径 /api');
       return '/api'; // 使用相对路径，会被 vite proxy 转发到 3001
     }
     
     // 如果直接访问 FluidDAM 前端（端口 5173），使用 3001 端口
     if (port === '5173') {
-      return 'http://localhost:3001';
+      const apiUrl = 'http://localhost:3001';
+      console.log('[FluidDAM getApiBaseUrl] 直接访问前端（端口 5173），返回:', apiUrl);
+      return apiUrl;
     }
+    
+    // 如果端口不匹配，默认使用 3001
+    const apiUrl = 'http://localhost:3001';
+    console.log('[FluidDAM getApiBaseUrl] 端口不匹配，默认返回:', apiUrl);
+    return apiUrl;
   }
   
   // 生产环境：使用相对路径，让 Nginx 或 vite 代理处理路由

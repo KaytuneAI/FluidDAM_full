@@ -4,6 +4,7 @@ import type { TempAsset } from '../types/assets';
 export const SessionBusKeys = {
   LINK_TO_BANNERGEN: 'fluiddam.linkToBannerGen.v1',
   BANNERGEN_TO_SPOT: 'fluiddam.bannerGenToSpot.v1',
+  LINK_TO_SPOT: 'fluiddam.linkToSpot.v1',
 };
 
 export type LinkToBannerGenPayload = {
@@ -22,6 +23,12 @@ export type BannerGenToSpotPayload = {
     previewDataUrl?: string;  // 可选，小图
     canvasJson?: any;         // 画布 JSON
   }>;
+};
+
+export type LinkToSpotPayload = {
+  from: 'link';
+  createdAt: number;
+  assets: TempAsset[];
 };
 
 export function writeSessionPayload<T>(key: string, payload: T) {
@@ -43,4 +50,6 @@ export function readSessionPayload<T>(key: string): T | null {
     return null;
   }
 }
+
+
 

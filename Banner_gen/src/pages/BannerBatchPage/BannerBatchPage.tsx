@@ -28,6 +28,7 @@ import {
   clearBannerGenData,
 } from "../../utils/persistence";
 import { navigateToFluidDAM } from "../../utils/navigation";
+import { shareBannerZip } from "../../utils/apiUtils";
 import "./BannerBatchPage.css";
 
 export const BannerBatchPage: React.FC = () => {
@@ -46,6 +47,9 @@ export const BannerBatchPage: React.FC = () => {
   const [jsonData, setJsonData] = useState<BannerData[]>([]);
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  const [isSharing, setIsSharing] = useState<boolean>(false);
+  const [showShareDialog, setShowShareDialog] = useState<boolean>(false);
+  const [shareUrl, setShareUrl] = useState<string>("");
   // 保存每个数据索引的编辑值：{ [index]: { [fieldName]: value } }
   const [editedValues, setEditedValues] = useState<Record<number, Record<string, string>>>({});
   
@@ -143,7 +147,14 @@ export const BannerBatchPage: React.FC = () => {
       
       // 恢复来自 Link 的素材（如果 sessionStorage 中没有新数据）
       if (saved.linkedAssets && saved.linkedAssets.length > 0) {
-        setLinkedAssets(saved.linkedAssets);
+        // 确保 source 字段类型正确
+        const validLinkedAssets = saved.linkedAssets.map(asset => ({
+          ...asset,
+          source: (asset.source === 'local-upload' || asset.source === 'external-url' || asset.source === 'dam-api')
+            ? asset.source
+            : 'local-upload' as const
+        }));
+        setLinkedAssets(validLinkedAssets);
         restoredCount++;
       }
       
@@ -1895,6 +1906,177 @@ export const BannerBatchPage: React.FC = () => {
     }
   };
 
+  // 打包并分享到服务器
+  const handleShareZip = async () => {
+    // 检查模板是否已加载
+    const hasTemplate = !!(htmlContent && iframeRef.current);
+    
+    if (!hasTemplate) {
+      setError("请先上传模板");
+      return;
+    }
+
+    setIsSharing(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const zip = new JSZip();
+      let successCount = 0;
+      let bannerIndex = 0;
+
+      // 生成时间戳
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const hour = String(now.getHours()).padStart(2, '0');
+      const minute = String(now.getMinutes()).padStart(2, '0');
+      const timestamp = `${year}${month}${day}${hour}${minute}`;
+
+      // 循环所有 JSON 数据项生成图片
+      for (let i = 0; i < jsonData.length; i++) {
+        bannerIndex++;
+        setCurrentIndex(i);
+        
+        const isTemplate = i === 0;
+        
+        // 重置 iframe 到原始 HTML 状态
+        if (iframeRef.current && htmlContent) {
+          iframeRef.current.srcdoc = buildSrcDoc(htmlContent, cssContent);
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+        
+        // 应用数据
+        applyJsonDataToIframe(jsonData[i], i);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+
+        const iframe = iframeRef.current;
+        if (!iframe) continue;
+
+        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (!iframeDoc) continue;
+        
+        // 应用编辑的值
+        const edits = editedValues[i] || {};
+        Object.entries(edits).forEach(([fieldName, value]) => {
+          if (fieldName.endsWith('_transform')) {
+            const transformMatch = fieldName.match(/^(.+)_transform_(\d+)$/);
+            if (transformMatch) {
+              const originalFieldName = transformMatch[1];
+              const imgIndex = parseInt(transformMatch[2], 10);
+              const allElements = Array.from(iframeDoc.querySelectorAll(`[data-field="${originalFieldName}"]`)) as HTMLImageElement[];
+              const imgElements = allElements.filter(el => el.tagName === "IMG");
+              if (imgElements[imgIndex]) {
+                imgElements[imgIndex].style.transform = String(value);
+                imgElements[imgIndex].style.transformOrigin = 'center center';
+              }
+            } else {
+              const originalFieldName = fieldName.replace(/_transform$/, '');
+              const allElements = Array.from(iframeDoc.querySelectorAll(`[data-field="${originalFieldName}"]`)) as HTMLImageElement[];
+              allElements.forEach(el => {
+                if (el.tagName === "IMG") {
+                  el.style.transform = String(value);
+                  el.style.transformOrigin = 'center center';
+                }
+              });
+            }
+          }
+        });
+        
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        // 等待字体加载完成
+        await waitForIframeFonts(iframeDoc);
+
+        // 清除所有 highlight
+        clearExportIframeHighlights();
+
+        // 优先导出 .container 元素，如果没有则使用 body
+        const container = iframeDoc.querySelector('.container') as HTMLElement;
+        const exportElement = container || iframeDoc.body;
+        if (!exportElement) continue;
+
+        const row = jsonData[i];
+        
+        const fileName = isTemplate
+          ? `template_${timestamp}.png`
+          : (row.id 
+              ? `${row.id}_${timestamp}.png`
+              : `banner_${bannerIndex}_${timestamp}.png`);
+
+        try {
+          // 导出为 Data URL
+          const dataUrl = await exportNodeToPngDataUrl(exportElement, { fontEmbedCSS: cssContent });
+          
+          // 将 Data URL 转换为 Blob
+          const response = await fetch(dataUrl);
+          const blob = await response.blob();
+          
+          // 添加到 ZIP
+          zip.file(fileName, blob);
+          successCount++;
+        } catch (err) {
+          console.error(`导出第 ${i + 1} 条失败:`, err);
+        }
+      }
+
+      if (successCount > 0) {
+        // 生成 ZIP 文件
+        const zipBlob = await zip.generateAsync({ type: "blob" });
+        
+        // 上传到服务器并获取分享链接
+        try {
+          const result = await shareBannerZip(zipBlob);
+          
+          if (result.success && result.shareUrl) {
+            setShareUrl(result.shareUrl);
+            setShowShareDialog(true);
+            setSuccess(`成功生成 ${successCount} 张 Banner 并已上传，分享链接已生成`);
+            setCurrentIndex(0);
+          } else {
+            throw new Error(result.message || '分享失败');
+          }
+        } catch (uploadError: any) {
+          console.error('上传失败:', uploadError);
+          setError(`上传失败：${uploadError.message || '未知错误'}`);
+        }
+      } else {
+        setError("没有成功生成任何 Banner");
+      }
+    } catch (err) {
+      setError("打包分享过程中出现错误，请查看控制台");
+      console.error("打包分享错误:", err);
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
+  // 复制分享链接到剪贴板
+  const copyShareUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setSuccess("分享链接已复制到剪贴板");
+      setTimeout(() => setSuccess(""), 3000);
+    } catch (err) {
+      // 降级方案
+      const textArea = document.createElement("textarea");
+      textArea.value = shareUrl;
+      textArea.style.position = "fixed";
+      textArea.style.opacity = "0";
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        setSuccess("分享链接已复制到剪贴板");
+        setTimeout(() => setSuccess(""), 3000);
+      } catch (e) {
+        setError("复制失败，请手动复制链接");
+      }
+      document.body.removeChild(textArea);
+    }
+  };
+
   // 调整 iframe 尺寸以匹配内容（使用预览 iframe）
   const adjustIframeSize = useCallback(() => {
     const iframe = previewIframeRef.current || iframeRef.current;
@@ -2388,14 +2570,20 @@ export const BannerBatchPage: React.FC = () => {
                 )}
               </div>
 
-              {/* 导入SpotStudio按钮 */}
+              {/* 打包Share按钮 */}
               <div className="template-view-mode-section">
                 <button
-                  onClick={() => navigateToFluidDAM()}
+                  onClick={handleShareZip}
+                  disabled={isSharing || jsonData.length === 0 || !templateAssets}
                   className="btn btn-primary btn-import"
                 >
-                  导入SpotStudio
+                  {isSharing ? "打包上传中..." : "打包Share"}
                 </button>
+                {isSharing && (
+                  <div className="info-text">
+                    正在打包并上传，请稍候...
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -2428,6 +2616,54 @@ export const BannerBatchPage: React.FC = () => {
           {success && (
             <div className="message message-success">
               <span>✓</span> {success}
+            </div>
+          )}
+
+          {/* 分享链接对话框 */}
+          {showShareDialog && (
+            <div className="share-dialog-overlay" onClick={() => setShowShareDialog(false)}>
+              <div className="share-dialog" onClick={(e) => e.stopPropagation()}>
+                <div className="share-dialog-header">
+                  <h3>分享链接已生成</h3>
+                  <button
+                    className="share-dialog-close"
+                    onClick={() => setShowShareDialog(false)}
+                    title="关闭"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="share-dialog-content">
+                  <p style={{ marginBottom: '12px', color: '#666' }}>
+                    文件已上传到服务器，链接将在24小时后自动失效
+                  </p>
+                  <div className="share-url-container">
+                    <input
+                      type="text"
+                      readOnly
+                      value={shareUrl}
+                      className="share-url-input"
+                      onClick={(e) => (e.target as HTMLInputElement).select()}
+                    />
+                    <button
+                      className="btn btn-primary btn-small"
+                      onClick={copyShareUrl}
+                    >
+                      复制链接
+                    </button>
+                  </div>
+                  <div style={{ marginTop: '12px' }}>
+                    <a
+                      href={shareUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn btn-secondary btn-small"
+                    >
+                      打开链接
+                    </a>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 

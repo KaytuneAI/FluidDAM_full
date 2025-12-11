@@ -120,7 +120,7 @@ export default function IntegratedAssetSidebar({ editor, selectedFrame, setIsLoa
     }
   }, [onScrollToAsset, scrollToAsset]);
 
-  // 更新资产列表 - 从当前页面的image形状反查资产（带去抖）
+  // 更新资产列表 - 从store中获取所有image资产（带去抖）
   const updateAssets = useCallback(() => {
     if (!editor) return;
     
@@ -132,29 +132,47 @@ export default function IntegratedAssetSidebar({ editor, selectedFrame, setIsLoa
     // 设置新的去抖定时器
     debounceTimerRef.current = setTimeout(() => {
       try {
-        // 1. 获取当前页面的所有image形状
-        const currentShapes = editor.getCurrentPageShapes();
-        const imageShapes = currentShapes.filter(shape => shape.type === 'image');
-        
-        // 2. 从image形状中提取assetId，然后获取对应的资产
         const assets = [];
         const seenAssetIds = new Set();
         
-        for (const imageShape of imageShapes) {
-          const assetId = imageShape.props?.assetId;
-          if (assetId && !seenAssetIds.has(assetId)) {
-            try {
-              const asset = editor.getAsset(assetId);
-              if (asset && asset.type === 'image') {
+        // 方法1: 从store中直接获取所有image资产（包括未使用的）
+        try {
+          const allAssets = editor.getAssets();
+          for (const [key, asset] of Object.entries(allAssets)) {
+            if (asset && asset.type === 'image') {
+              const assetId = asset.id || key;
+              if (!seenAssetIds.has(assetId)) {
                 assets.push(asset);
                 seenAssetIds.add(assetId);
               }
-            } catch (error) {
-              // 资产不存在，跳过
+            }
+          }
+        } catch (error) {
+          console.warn('从store获取资产时出错，尝试备用方法:', error);
+        }
+        
+        // 方法2: 如果方法1没有获取到资产，从当前页面的image形状反查资产（备用方案）
+        if (assets.length === 0) {
+          const currentShapes = editor.getCurrentPageShapes();
+          const imageShapes = currentShapes.filter(shape => shape.type === 'image');
+          
+          for (const imageShape of imageShapes) {
+            const assetId = imageShape.props?.assetId;
+            if (assetId && !seenAssetIds.has(assetId)) {
+              try {
+                const asset = editor.getAsset(assetId);
+                if (asset && asset.type === 'image') {
+                  assets.push(asset);
+                  seenAssetIds.add(assetId);
+                }
+              } catch (error) {
+                // 资产不存在，跳过
+              }
             }
           }
         }
         
+        console.log('更新资产列表，共', assets.length, '个资产');
         setAssets(assets);
       } catch (error) {
         console.error('更新资产列表时出错:', error);

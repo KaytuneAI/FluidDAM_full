@@ -12,7 +12,7 @@ for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3000" ^| findstr "LISTENING
     taskkill /F /PID %%a >nul 2>&1
 )
 
-echo Finding and stopping process on port 3001 (API Server)...
+echo Finding and stopping process on port 3001 (Unified API Server)...
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3001" ^| findstr "LISTENING"') do (
     echo Stopping process PID: %%a
     taskkill /F /PID %%a >nul 2>&1
@@ -34,7 +34,7 @@ REM Close terminal windows by window title
 echo.
 echo Closing terminal windows...
 REM Close windows by title using PowerShell (more reliable than taskkill)
-powershell -Command "Get-Process cmd -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -match 'FluidDAM|Banner_gen' } | Stop-Process -Force" >nul 2>&1
+powershell -Command "Get-Process cmd -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -match 'FluidDAM|Banner_gen|Unified API|API Server' } | Stop-Process -Force" >nul 2>&1
 
 echo.
 echo All applications and terminal windows stopped!

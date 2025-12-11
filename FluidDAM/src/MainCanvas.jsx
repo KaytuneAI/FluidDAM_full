@@ -4,6 +4,23 @@ import "tldraw/tldraw.css";
 import { getApiBaseUrl } from './utils/apiUtils.js';
 import storageManager from './utils/storageManager.js';
 
+// 导入 sessionBus（使用相对路径指向共享目录）
+function readSessionPayload(key) {
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    sessionStorage.removeItem(key); // 用完即删，避免脏数据
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error('[sessionBus] read error', key, err);
+    return null;
+  }
+}
+
+const SessionBusKeys = {
+  LINK_TO_SPOT: 'fluiddam.linkToSpot.v1',
+};
+
 // 读图片天然尺寸（优先用 asset，其次用 src 加载）
 async function getNaturalSize(editor, assetId, assetSrc) {
   const normId = assetId?.startsWith('asset:') ? assetId : `asset:${assetId}`;
@@ -722,6 +739,184 @@ export default function MainCanvas() {
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
+
+  // 从 Link 导入素材到 SpotStudio
+  useEffect(() => {
+    if (!editorReady || !editorRef.current) {
+      console.log('编辑器未就绪，等待中...', { editorReady, hasEditor: !!editorRef.current });
+      return;
+    }
+
+    console.log('开始检查从 Link 导入的素材...');
+
+    const importAssetsFromLink = async () => {
+      try {
+        // 先检查 URL 参数中是否有 token（跨端口的情况）
+        const urlParams = new URLSearchParams(window.location.search);
+        const token = urlParams.get('linkAssets');
+        
+        console.log('当前 URL:', window.location.href);
+        console.log('URL 参数:', window.location.search);
+        console.log('检查 token:', token);
+        
+        if (token) {
+          console.log('✅ 从 URL 参数获取 token:', token);
+          
+          // 从 API 服务器获取素材数据
+          console.log('准备调用 getApiBaseUrl()...');
+          let apiBaseUrl;
+          try {
+            console.log('调用 getApiBaseUrl()...');
+            apiBaseUrl = getApiBaseUrl();
+            console.log('✅ getApiBaseUrl() 返回:', apiBaseUrl);
+          } catch (error) {
+            console.error('❌ 获取 API 地址时出错:', error);
+            console.error('错误堆栈:', error.stack);
+            return;
+          }
+          
+          if (!apiBaseUrl) {
+            console.error('❌ 无法获取 API 地址，apiBaseUrl 为:', apiBaseUrl);
+            return;
+          }
+          
+          const fetchUrl = `${apiBaseUrl}/api/link-to-spot-assets/${token}`;
+          console.log('准备从 API 获取素材数据，URL:', fetchUrl);
+          
+          try {
+            console.log('发送 fetch 请求...');
+            const response = await fetch(fetchUrl);
+            console.log('收到响应，状态:', response.status, response.statusText);
+            
+            if (!response.ok) {
+              const errorText = await response.text();
+              console.error('API 响应错误:', errorText);
+              throw new Error(`HTTP错误: ${response.status} - ${errorText}`);
+            }
+            
+            const result = await response.json();
+            console.log('API 响应结果:', result);
+            
+            if (!result.success || !result.assets) {
+              console.error('API 返回数据无效:', result);
+              throw new Error(result.message || '获取失败');
+            }
+            
+            console.log('✅ 从 API 服务器获取到素材数据:', result.assets.length, '个素材');
+            
+            // 清理 URL 参数
+            urlParams.delete('linkAssets');
+            const newUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
+            window.history.replaceState({}, '', newUrl);
+            
+            console.log('准备处理素材数据...');
+            await processAssets({ assets: result.assets });
+            console.log('✅ 素材处理完成');
+            return;
+          } catch (error) {
+            console.error('❌ 从 API 获取素材数据失败:', error);
+            console.error('错误详情:', error.message, error.stack);
+            // 继续尝试 sessionStorage
+          }
+        }
+        
+        // 尝试从 sessionStorage 读取（统一入口的情况）
+        const key = 'fluiddam.linkToSpot.v1';
+        console.log('检查 sessionStorage key:', key);
+        
+        const allSessionKeys = Object.keys(sessionStorage);
+        console.log('所有 sessionStorage keys:', allSessionKeys.filter(k => k.includes('linkToSpot') || k.includes('fluiddam')));
+        
+        const raw = sessionStorage.getItem(key);
+        console.log('从 sessionStorage 读取到的数据:', raw ? `有数据 (${raw.length} 字符)` : '无数据');
+        console.log('当前域名:', window.location.origin);
+        console.log('当前端口:', window.location.port);
+        
+        if (raw) {
+          console.log('✅ 从 sessionStorage 找到数据');
+          sessionStorage.removeItem(key); // 用完即删，避免脏数据
+          const payload = JSON.parse(raw);
+          await processAssets(payload);
+          return;
+        }
+        
+        console.log('❌ 没有找到素材数据');
+        console.log('可能的原因：1) 数据未保存 2) 跨端口导致存储不共享 3) 数据已过期');
+      } catch (error) {
+        console.error('从 Link 导入素材时出错:', error);
+      }
+    };
+
+    const processAssets = async (payload) => {
+      if (!payload || !payload.assets || payload.assets.length === 0) {
+        console.log('payload 无效或没有素材:', payload);
+        return;
+      }
+
+      console.log('从 Link 导入素材到 SpotStudio:', payload.assets.length, '个素材');
+      console.log('解析后的 payload:', payload);
+
+      const editor = editorRef.current;
+      if (!editor) {
+        console.error('❌ 编辑器未就绪，无法导入素材');
+        return;
+      }
+      
+      console.log('编辑器已就绪，开始处理素材...');
+      const assets = payload.assets;
+
+      // 为每个素材创建 asset 并添加到编辑器
+      for (const assetData of assets) {
+          try {
+            // 预加载图片获取真实尺寸
+            const img = new Image();
+            await new Promise((resolve, reject) => {
+              img.onload = resolve;
+              img.onerror = reject;
+              img.src = assetData.dataUrl;
+            });
+
+            const naturalW = img.naturalWidth || 300;
+            const naturalH = img.naturalHeight || 300;
+
+            // 创建 asset ID
+            const assetId = `asset:${(globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2))}`;
+
+            // 创建资产 - 使用 store.put 方法
+            editor.store.put([
+              {
+                id: assetId,
+                type: "image",
+                typeName: "asset",
+                meta: {},
+                props: {
+                  w: naturalW,
+                  h: naturalH,
+                  src: assetData.dataUrl,
+                  name: assetData.name || '未命名',
+                  mimeType: assetData.mimeType || 'image/png',
+                  isAnimated: false
+                }
+              }
+            ]);
+
+            console.log('素材已添加到 SpotStudio:', assetData.name, assetId);
+          } catch (error) {
+            console.error('添加素材失败:', assetData.name, error);
+          }
+        }
+
+      console.log('所有素材已成功导入到 SpotStudio');
+    };
+
+    // 延迟一下，确保编辑器完全初始化（增加到2秒，确保在自动恢复之后执行）
+    const timer = setTimeout(() => {
+      console.log('延迟执行导入素材检查...');
+      importAssetsFromLink();
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [editorReady]);
 
   // 自动加载分享画布
   useEffect(() => {

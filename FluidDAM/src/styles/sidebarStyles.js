@@ -30,8 +30,7 @@ export const sidebarStyles = {
   }),
   thumbWrap: { 
     width: "100%", 
-    minHeight: 40, 
-    maxHeight: 120, 
+    aspectRatio: "1 / 1",  // 正方形（高度与宽度一致）
     overflow: "hidden", 
     borderRadius: 2, 
     background: "#f9fafb", 
@@ -40,9 +39,11 @@ export const sidebarStyles = {
     justifyContent: "center" 
   },
   thumb: { 
-    width: "100%", 
-    height: "auto", 
-    objectFit: "contain" 
+    maxWidth: "100%", 
+    maxHeight: "100%", 
+    width: "auto",
+    height: "auto",
+    objectFit: "contain"  // 保持宽高比，不裁剪
   },
   name: { 
     fontSize: 12, 
