@@ -42,39 +42,60 @@ const STORAGE_KEY = 'bannergen.persistedData.v1';
  */
 export function saveBannerGenData(data: Partial<BannerGenPersistedData>): void {
   try {
-    const existing = loadBannerGenData();
-    const merged: BannerGenPersistedData = {
-      ...existing,
-      ...data,
+    // 只保存关键信息，完全不保存大的内容
+    const minimal: Partial<BannerGenPersistedData> = {
+      htmlFileName: data.htmlFileName,
+      cssFileName: data.cssFileName,
+      templateFields: data.templateFields,
+      currentIndex: data.currentIndex ?? 0,
       savedAt: Date.now(),
+      // 明确不保存以下大内容：
+      // - htmlContent, cssContent (太大，用户需要重新上传)
+      // - jsonData (太大，用户需要重新上传)
+      // - editedValues (包含大量 transform 数据，切换记录时会丢失，但这是可接受的)
+      // - linkedAssets (包含 base64 数据，太大)
     };
     
-    // 检查数据大小，如果太大则只保存关键数据
-    const jsonStr = JSON.stringify(merged);
-    const sizeInMB = new Blob([jsonStr]).size / (1024 * 1024);
+    const jsonStr = JSON.stringify(minimal);
+    const sizeInBytes = new Blob([jsonStr]).size;
+    const sizeInKB = sizeInBytes / 1024;
     
-    if (sizeInMB > 5) {
-      // 如果超过 5MB，只保存基本信息，不保存大的 base64 数据
-      console.warn('[persistence] 数据过大，仅保存基本信息');
-      const trimmed: BannerGenPersistedData = {
-        ...merged,
-        // 移除大的 base64 数据，但保留 URL
-        linkedAssets: merged.linkedAssets?.map(asset => ({
-          ...asset,
-          dataUrl: asset.dataUrl && asset.dataUrl.length > 10000 ? undefined : asset.dataUrl,
-        })) || [],
+    // 如果超过 50KB，只保存最基本的信息
+    if (sizeInKB > 50) {
+      const ultraMinimal: Partial<BannerGenPersistedData> = {
+        currentIndex: data.currentIndex ?? 0,
+        savedAt: Date.now(),
       };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
-    } else {
-      localStorage.setItem(STORAGE_KEY, jsonStr);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(ultraMinimal));
+      console.warn('[persistence] 数据过大，仅保存当前索引');
+      return;
     }
+    
+    localStorage.setItem(STORAGE_KEY, jsonStr);
   } catch (err) {
     console.error('[persistence] 保存数据失败:', err);
     // 如果存储空间不足，尝试清理旧数据
-    if (err instanceof DOMException && err.code === 22) {
+    if (err instanceof DOMException && (err.code === 22 || err.name === 'QuotaExceededError')) {
       try {
-        localStorage.removeItem(STORAGE_KEY);
-        console.warn('[persistence] 存储空间不足，已清除旧数据');
+        // 尝试清理所有相关的 localStorage 数据
+        const keys = Object.keys(localStorage);
+        keys.forEach(key => {
+          if (key.startsWith('bannergen.')) {
+            localStorage.removeItem(key);
+          }
+        });
+        console.warn('[persistence] 存储空间不足，已清除所有 BannerGen 相关数据');
+        
+        // 如果清理后还是失败，只保存最基本的数据
+        try {
+          const minimal: Partial<BannerGenPersistedData> = {
+            currentIndex: data.currentIndex ?? 0,
+            savedAt: Date.now(),
+          };
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(minimal));
+        } catch (minimalErr) {
+          console.error('[persistence] 保存最小数据也失败:', minimalErr);
+        }
       } catch (clearErr) {
         console.error('[persistence] 清除旧数据失败:', clearErr);
       }
@@ -124,4 +145,6 @@ export function clearBannerGenData(): void {
 export function hasBannerGenData(): boolean {
   return localStorage.getItem(STORAGE_KEY) !== null;
 }
+
+
 

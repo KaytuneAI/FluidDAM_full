@@ -345,11 +345,28 @@
 }
 
 /* 预览控制 */
+.preview-controls-container {
+  width: 100%;
+  margin-top: 16px;
+  padding: 8px 16px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  box-shadow: 
+    0 2px 12px rgba(0, 0, 0, 0.04),
+    0 1px 3px rgba(0, 0, 0, 0.02);
+}
+
 .preview-controls {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.preview-controls .btn {
+  padding: 8px 16px;
+  font-size: 13px;
 }
 
 .preview-index {
@@ -997,15 +1014,15 @@
 .template-upload-unified,
 .template-view-mode-section {
   flex: 1;
-  min-height: 180px;
-  margin-bottom: 20px;
-  padding: 20px;
+  min-height: 100px;
+  margin-bottom: 12px;
+  padding: 12px 16px;
   background: linear-gradient(135deg, 
     rgba(102, 126, 234, 0.08) 0%, 
     rgba(0, 212, 255, 0.08) 50%,
     rgba(118, 75, 162, 0.08) 100%);
   border: 2px solid transparent;
-  border-radius: 16px;
+  border-radius: 12px;
   position: relative;
   overflow: hidden;
   box-shadow: 
@@ -1055,8 +1072,8 @@
 
 .template-upload-unified h3,
 .template-view-mode-section h3 {
-  margin: 0 0 12px 0;
-  font-size: 16px;
+  margin: 0 0 8px 0;
+  font-size: 14px;
   font-weight: 600;
   color: rgba(0, 0, 0, 0.85);
   position: relative;
@@ -1067,11 +1084,41 @@
   background-clip: text;
 }
 
+.template-upload-row {
+  display: flex;
+  gap: 16px;
+  position: relative;
+  z-index: 1;
+  width: 100%;
+}
+
+.template-upload-left-area {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  z-index: 1;
+}
+
+.template-upload-left-area .template-upload-label {
+  width: auto;
+  display: inline-block;
+}
+
+.template-upload-right-area {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  position: relative;
+  z-index: 1;
+}
+
 .template-upload-unified .template-upload-hint {
-  margin: 0 0 16px 0;
-  font-size: 12px;
+  margin: 0;
+  font-size: 11px;
   color: rgba(0, 0, 0, 0.65);
-  line-height: 1.5;
+  line-height: 1.4;
   position: relative;
   z-index: 1;
 }
@@ -1079,7 +1126,7 @@
 .view-mode-toggle {
   display: flex;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   position: relative;
   z-index: 1;
 }
@@ -1156,6 +1203,51 @@
   line-height: 1.5;
   position: relative;
   z-index: 1;
+}
+
+/* 批量操作按钮样式 */
+.template-upload-unified .btn-export,
+.template-view-mode-section .btn-import {
+  width: 100%;
+  padding: 14px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 0;
+}
+
+/* 批量操作区域中的容器样式调整 */
+.template-selector:has(.btn-export) .template-upload-unified,
+.template-selector:has(.btn-import) .template-view-mode-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 80px;
+}
+
+.template-upload-unified .btn-export:disabled,
+.template-view-mode-section .btn-import:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.template-upload-unified .info-text {
+  margin-top: 8px;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.65);
+  line-height: 1.5;
+  position: relative;
+  z-index: 1;
+  text-align: center;
 }
 
 /* 多图预览网格布局 */

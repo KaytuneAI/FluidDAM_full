@@ -27,6 +27,7 @@ import {
   loadBannerGenData,
   clearBannerGenData,
 } from "../../utils/persistence";
+import { navigateToFluidDAM } from "../../utils/navigation";
 import "./BannerBatchPage.css";
 
 export const BannerBatchPage: React.FC = () => {
@@ -883,6 +884,52 @@ export const BannerBatchPage: React.FC = () => {
     }
   }, [selectedField, syncSelectedFieldValueFromIframe, highlightElementInIframe]);
 
+  // 处理 iframe 内元素点击，自动选中对应的 data-field
+  const handleIframeElementClick = useCallback((e: MouseEvent, dataIndex?: number) => {
+    const target = e.target as HTMLElement;
+    if (!target) return;
+
+    // 向上查找具有 data-field 属性的元素
+    let element: HTMLElement | null = target;
+    let fieldName: string | null = null;
+    
+    // 最多向上查找5层
+    for (let i = 0; i < 5 && element; i++) {
+      fieldName = element.getAttribute('data-field');
+      if (fieldName) {
+        break;
+      }
+      element = element.parentElement;
+    }
+
+    // 如果找到了 data-field，选中对应的字段
+    if (fieldName) {
+      e.stopPropagation(); // 阻止事件冒泡，避免触发其他点击事件
+      
+      // 如果是多图模式且提供了 dataIndex，先选中对应的 banner
+      if (isMultiView && dataIndex !== undefined) {
+        handleSelectBanner(dataIndex);
+      }
+      
+      // 选中字段
+      const activeIndex = dataIndex !== undefined ? dataIndex : getActiveIndex();
+      if (selectedField === fieldName) {
+        // 如果点击的是已选中的字段，则取消选中
+        setSelectedField(null);
+        setSelectedFieldValue("");
+        clearAllFieldHighlights();
+      } else {
+        // 选中新字段
+        setSelectedField(fieldName);
+        highlightElementInIframe(fieldName, activeIndex);
+        syncSelectedFieldValueFromIframe(fieldName, activeIndex);
+      }
+    } else if (isMultiView && dataIndex !== undefined) {
+      // 如果没有点击 data-field 元素，但在多图模式下，仍然选中对应的 banner
+      handleSelectBanner(dataIndex);
+    }
+  }, [isMultiView, selectedField, getActiveIndex, handleSelectBanner, highlightElementInIframe, syncSelectedFieldValueFromIframe, clearAllFieldHighlights, setSelectedField, setSelectedFieldValue]);
+
   // 处理字段点击
   const handleFieldClick = (fieldName: string) => {
     const activeIndex = getActiveIndex();
@@ -1239,7 +1286,9 @@ export const BannerBatchPage: React.FC = () => {
         if (!iframeDoc) return () => {}; // 返回空清理函数
         
         // 计算当前 iframe 对应的数据索引
-        const dataIndex = isMultiView ? (currentIndex + iframeIndex) : getActiveIndex();
+        // 使用 ref 获取最新的 currentIndex，避免闭包捕获过时值
+        const latestCurrentIndex = currentIndexRef.current;
+        const dataIndex = isMultiView ? (latestCurrentIndex + iframeIndex) : latestCurrentIndex;
 
         // 找到所有具有相同 data-field 的图片
         const imgs = Array.from(iframeDoc.querySelectorAll(`[data-field="${selectedField}"]`)) as HTMLImageElement[];
@@ -1281,23 +1330,9 @@ export const BannerBatchPage: React.FC = () => {
           img.style.transformOrigin = 'center center';
           img.style.cursor = 'move';
 
-          // 同时更新导出 iframe 中对应索引的图片
-          if (iframeRef.current) {
-            try {
-              const exportDoc = iframeRef.current.contentDocument || iframeRef.current.contentWindow?.document;
-              if (exportDoc) {
-                const exportImgs = Array.from(exportDoc.querySelectorAll(`[data-field="${selectedField}"]`)) as HTMLImageElement[];
-                const exportImgElements = exportImgs.filter(el => el.tagName === 'IMG');
-                const imgIndex = getImageIndex(img);
-                if (exportImgElements[imgIndex]) {
-                  exportImgElements[imgIndex].style.transform = transform;
-                  exportImgElements[imgIndex].style.transformOrigin = 'center center';
-                }
-              }
-            } catch (e) {
-              console.warn('无法更新导出 iframe:', e);
-            }
-          }
+          // 注意：不在拖拽时更新导出 iframe
+          // 导出 iframe 只在批量生成时使用，每次生成时会重新应用数据，包括 transform
+          // 在拖拽时更新导出 iframe 可能导致其他记录的数据被错误修改
 
           // 保存到 editedValues（使用索引区分不同的图片）
           const imgIndex = getImageIndex(img);
@@ -1586,49 +1621,24 @@ export const BannerBatchPage: React.FC = () => {
     }
   }, [jsonData, currentIndex, applyJsonDataToIframe, editedValues, htmlContent, cssContent, isMultiView]);
 
-  // 自动保存数据到 localStorage（防抖）
+  // 自动保存数据到 localStorage（防抖，只保存关键信息）
   useEffect(() => {
     const timer = setTimeout(() => {
-      // 只在有实际数据时才保存
-      if (htmlContent || cssContent || jsonData.length > 0 || Object.keys(editedValues).length > 0 || linkedAssets.length > 0) {
+      // 只在有实际数据时才保存，但不保存大的内容
+      if (htmlFileName || cssFileName || templateFields.length > 0 || currentIndex > 0) {
         saveBannerGenData({
-          htmlContent,
-          cssContent,
           htmlFileName,
           cssFileName,
           templateFields,
-          jsonData,
           currentIndex,
-          editedValues,
-          linkedAssets,
+          // 不保存大的内容，只保存文件名和索引
+          // htmlContent, cssContent, jsonData, editedValues, linkedAssets 不保存
         });
       }
-    }, 1000); // 防抖：1秒后保存
+    }, 2000); // 防抖：2秒后保存，减少保存频率
 
     return () => clearTimeout(timer);
-  }, [htmlContent, cssContent, htmlFileName, cssFileName, templateFields, jsonData, currentIndex, editedValues, linkedAssets]);
-
-  // 自动保存数据到 localStorage（防抖）
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      // 只在有实际数据时才保存
-      if (htmlContent || cssContent || jsonData.length > 0 || Object.keys(editedValues).length > 0 || linkedAssets.length > 0) {
-        saveBannerGenData({
-          htmlContent,
-          cssContent,
-          htmlFileName,
-          cssFileName,
-          templateFields,
-          jsonData,
-          currentIndex,
-          editedValues,
-          linkedAssets,
-        });
-      }
-    }, 1000); // 防抖：1秒后保存
-
-    return () => clearTimeout(timer);
-  }, [htmlContent, cssContent, htmlFileName, cssFileName, templateFields, jsonData, currentIndex, editedValues, linkedAssets]);
+  }, [htmlFileName, cssFileName, templateFields, currentIndex]);
 
   // 切换到上一条
   const handlePrev = () => {
@@ -2029,7 +2039,8 @@ export const BannerBatchPage: React.FC = () => {
                   title="banner-preview"
                   className="preview-iframe"
                   srcDoc={singleViewSrcDoc}
-                  sandbox="allow-same-origin"
+                  sandbox="allow-same-origin allow-scripts"
+                  // 注意：同时使用 allow-scripts 和 allow-same-origin 会有安全警告，但这是必要的，因为我们需要在 iframe 中执行脚本并访问父窗口
                   style={
                     iframeSize
                       ? {
@@ -2039,7 +2050,26 @@ export const BannerBatchPage: React.FC = () => {
                         }
                       : undefined
                   }
-                  onLoad={adjustIframeSize}
+                  onLoad={(e) => {
+                    adjustIframeSize();
+                    // 添加点击事件监听，点击 data-field 元素时自动选中字段
+                    try {
+                      const iframe = e.currentTarget;
+                      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+                      if (iframeDoc) {
+                        const clickHandler = (event: MouseEvent) => {
+                          handleIframeElementClick(event);
+                        };
+                        // 移除旧的监听器（如果存在）
+                        iframeDoc.removeEventListener('click', clickHandler);
+                        // 添加新的监听器
+                        iframeDoc.addEventListener('click', clickHandler);
+                      }
+                    } catch (err) {
+                      // 忽略跨域错误
+                      console.warn('无法添加 iframe 点击事件:', err);
+                    }
+                  }}
                 />
               ) : (
                 <div className="banner-placeholder">
@@ -2097,7 +2127,8 @@ export const BannerBatchPage: React.FC = () => {
                               title={`banner-preview-${idx}`}
                               className="preview-iframe multi-preview-iframe"
                               srcDoc={buildSrcDoc(htmlContent, cssContent)}
-                              sandbox="allow-same-origin"
+                              sandbox="allow-same-origin allow-scripts"
+                  // 注意：同时使用 allow-scripts 和 allow-same-origin 会有安全警告，但这是必要的，因为我们需要在 iframe 中执行脚本并访问父窗口
                               style={{
                                 width: templateWidth,
                                 height: templateHeight,
@@ -2110,18 +2141,19 @@ export const BannerBatchPage: React.FC = () => {
                                   adjustIframeSize();
                                 }
                                 
-                                // 给 iframe 内部添加点击事件，点击任意位置都能激活该产品
+                                // 给 iframe 内部添加点击事件
                                 try {
                                   const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
                                   if (iframeDoc) {
-                                    const clickHandler = () => {
-                                      const latestCurrentIndex = currentIndexRef.current;
-                                      const latestJsonData = jsonDataRef.current;
-                                      const latestDataIndex = latestCurrentIndex + idx;
-                                      const latestHasData = latestJsonData.length > 0 && latestDataIndex < latestJsonData.length;
-                                      
+                                    const latestCurrentIndex = currentIndexRef.current;
+                                    const latestJsonData = jsonDataRef.current;
+                                    const latestDataIndex = latestCurrentIndex + idx;
+                                    const latestHasData = latestJsonData.length > 0 && latestDataIndex < latestJsonData.length;
+                                    
+                                    const clickHandler = (event: MouseEvent) => {
                                       if (latestHasData) {
-                                        handleSelectBanner(latestDataIndex);
+                                        // 使用统一的处理函数
+                                        handleIframeElementClick(event, latestDataIndex);
                                       }
                                     };
                                     
@@ -2168,6 +2200,43 @@ export const BannerBatchPage: React.FC = () => {
             </div>
           )}
 
+          {/* 预览控制 */}
+          {jsonData.length > 0 && (
+            <div className="preview-controls-container">
+              <div className="preview-controls">
+                <button
+                  onClick={handlePrev}
+                  disabled={currentIndex === 0}
+                  className="btn btn-secondary"
+                >
+                  ← {isMultiView ? '上4条' : '上一条'}
+                </button>
+                <span className="preview-index">
+                  {isMultiView ? (
+                    <>
+                      {currentIndex + 1}-{Math.min(currentIndex + 4, jsonData.length)} / {jsonData.length}
+                      <span className="preview-mode-badge">多图</span>
+                    </>
+                  ) : (
+                    <>
+                      {currentIndex + 1} / {jsonData.length}
+                    </>
+                  )}
+                </span>
+                <button
+                  onClick={handleNext}
+                  disabled={isMultiView 
+                    ? currentIndex >= Math.max(0, jsonData.length - 4)
+                    : currentIndex === jsonData.length - 1
+                  }
+                  className="btn btn-secondary"
+                >
+                  {isMultiView ? '下4条' : '下一条'} →
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* 模板选择区域 */}
           <div className="template-selector">
             <h3>选择模板</h3>
@@ -2176,37 +2245,43 @@ export const BannerBatchPage: React.FC = () => {
               {/* 统一上传区域 */}
               <div className="template-upload-section template-upload-unified">
                 <h3>上传文件</h3>
-                <p className="template-upload-hint">
-                  支持 ZIP 模板文件（包含 HTML、CSS、图片和 Json 替换文件）或 Excel 数据文件
-                </p>
-                <label className="template-upload-label">
-                  <input
-                    ref={zipInputRef}
-                    type="file"
-                    accept=".zip,.xlsx,.xls"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0] || null;
-                      if (!file) return;
-                      
-                      // 根据文件类型调用不同的处理函数
-                      const fileName = file.name.toLowerCase();
-                      if (fileName.endsWith('.zip')) {
-                        handleZipUpload(file);
-                      } else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
-                        handleExcelUpload(file);
-                      } else {
-                        setError('不支持的文件类型，请上传 ZIP 或 Excel 文件');
-                      }
-                      
-                      // 清空 input 以便可以重复选择同一文件
-                      if (e.target) {
-                        e.target.value = '';
-                      }
-                    }}
-                    className="template-file-input"
-                  />
-                  <span className="btn btn-primary btn-small">上传文件</span>
-                </label>
+                <div className="template-upload-row">
+                  <div className="template-upload-left-area">
+                    <label className="template-upload-label">
+                      <input
+                        ref={zipInputRef}
+                        type="file"
+                        accept=".zip,.xlsx,.xls"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0] || null;
+                          if (!file) return;
+                          
+                          // 根据文件类型调用不同的处理函数
+                          const fileName = file.name.toLowerCase();
+                          if (fileName.endsWith('.zip')) {
+                            handleZipUpload(file);
+                          } else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+                            handleExcelUpload(file);
+                          } else {
+                            setError('不支持的文件类型，请上传 ZIP 或 Excel 文件');
+                          }
+                          
+                          // 清空 input 以便可以重复选择同一文件
+                          if (e.target) {
+                            e.target.value = '';
+                          }
+                        }}
+                        className="template-file-input"
+                      />
+                      <span className="btn btn-primary btn-small">上传文件</span>
+                    </label>
+                  </div>
+                  <div className="template-upload-right-area">
+                    <p className="template-upload-hint">
+                      支持 ZIP 模板文件（包含 HTML、CSS、图片和 Json 替换文件）或 Excel 数据文件
+                    </p>
+                  </div>
+                </div>
               </div>
 
               {/* 单图/多图切换（右侧一半） */}
@@ -2258,9 +2333,6 @@ export const BannerBatchPage: React.FC = () => {
                     </svg>
                   </button>
                 </div>
-                <p className="view-mode-hint">
-                  {isMultiView ? '显示4个画布（2x2布局）' : '显示单个画布'}
-                </p>
               </div>
             </div>
 
@@ -2294,6 +2366,38 @@ export const BannerBatchPage: React.FC = () => {
                 )}
               </div>
             ) : null}
+          </div>
+
+          {/* 分发中心区域 */}
+          <div className="template-selector">
+            <h3>分发中心</h3>
+            <div className="template-selector-content">
+              {/* Banner图片批量下载按钮 */}
+              <div className="template-upload-section template-upload-unified">
+                <button
+                  onClick={handleGenerateAll}
+                  disabled={isGenerating || jsonData.length === 0 || !templateAssets}
+                  className="btn btn-primary btn-export"
+                >
+                  {isGenerating ? "生成中..." : "Banner图片批量下载"}
+                </button>
+                {isGenerating && (
+                  <div className="info-text">
+                    正在生成，请稍候...
+                  </div>
+                )}
+              </div>
+
+              {/* 导入SpotStudio按钮 */}
+              <div className="template-view-mode-section">
+                <button
+                  onClick={() => navigateToFluidDAM()}
+                  className="btn btn-primary btn-import"
+                >
+                  导入SpotStudio
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -2513,71 +2617,6 @@ export const BannerBatchPage: React.FC = () => {
             )}
           </div>
 
-          {/* 预览控制 */}
-          {jsonData.length > 0 && (
-            <div className="control-section">
-              <h3>预览控制</h3>
-              <div className="preview-controls">
-                <button
-                  onClick={handlePrev}
-                  disabled={currentIndex === 0}
-                  className="btn btn-secondary"
-                >
-                  ← {isMultiView ? '上4条' : '上一条'}
-                </button>
-                <span className="preview-index">
-                  {isMultiView ? (
-                    <>
-                      {currentIndex + 1}-{Math.min(currentIndex + 4, jsonData.length)} / {jsonData.length}
-                      <span className="preview-mode-badge">多图</span>
-                    </>
-                  ) : (
-                    <>
-                      {currentIndex + 1} / {jsonData.length}
-                    </>
-                  )}
-                </span>
-                <button
-                  onClick={handleNext}
-                  disabled={isMultiView 
-                    ? currentIndex >= Math.max(0, jsonData.length - 4)
-                    : currentIndex === jsonData.length - 1
-                  }
-                  className="btn btn-secondary"
-                >
-                  {isMultiView ? '下4条' : '下一条'} →
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* 批量生成 */}
-          <div className="control-section">
-            <h3>批量生成</h3>
-            <button
-              onClick={handleGenerateAll}
-              disabled={isGenerating || jsonData.length === 0 || !templateAssets}
-              className="btn btn-primary btn-generate"
-            >
-              {isGenerating ? "生成中..." : "一键生成所有 Banner"}
-            </button>
-            {isGenerating && (
-              <div className="info-text">
-                正在生成，请稍候...（浏览器可能会提示下载多个文件）
-              </div>
-            )}
-          </div>
-
-          {/* 使用说明 */}
-          <div className="control-section">
-            <h3>使用说明</h3>
-            <div className="info-text">
-              <p>1. 上传 ZIP 模板文件（包含 HTML、CSS 和图片）</p>
-              <p>2. ZIP 中可包含 JSON 数据文件，会自动加载；也可单独上传 JSON 文件</p>
-              <p>3. 使用左右按钮切换预览不同数据</p>
-              <p>4. 点击"一键生成"批量导出 PNG</p>
-            </div>
-          </div>
         </div>
 
         {/* 右侧素材面板 */}

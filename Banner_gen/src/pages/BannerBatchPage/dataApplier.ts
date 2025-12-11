@@ -197,12 +197,16 @@ export const applyJsonDataToMultiIframe = (
             img.src = src;
             img.style.display = "";
             
-            // 应用该图片的 transform（如果有）
+            // 应用该图片的 transform（如果有），否则清除 transform
             const transformKey = `product_main_src_transform_${idx}`;
             const savedTransform = edits[transformKey];
             if (savedTransform) {
               img.style.transform = String(savedTransform);
               img.style.transformOrigin = 'center center';
+            } else {
+              // 如果没有保存的 transform，清除 transform（恢复到默认状态）
+              img.style.transform = '';
+              img.style.transformOrigin = '';
             }
           });
 
@@ -305,25 +309,36 @@ export const applyJsonDataToMultiIframe = (
           fieldName === 'gift_products_src') return;
       if (Array.isArray(value)) return;
 
-      const element = iframeDoc.querySelector(`[data-field="${fieldName}"]`) as HTMLElement;
-      if (element) {
-        const finalValue = edits[fieldName] !== undefined ? edits[fieldName] : String(value);
-        
-        if (element.tagName === "IMG") {
-          const img = element as HTMLImageElement;
-          img.src = finalValue;
+      // 查找所有匹配的元素（可能有多张图片）
+      const allElements = Array.from(iframeDoc.querySelectorAll(`[data-field="${fieldName}"]`)) as HTMLElement[];
+      if (allElements.length === 0) return;
+      
+      const finalValue = edits[fieldName] !== undefined ? edits[fieldName] : String(value);
+      
+      // 如果是图片字段，需要分别处理每张图片
+      if (allElements[0].tagName === "IMG") {
+        const imgElements = allElements.filter(el => el.tagName === "IMG") as HTMLImageElement[];
+        imgElements.forEach((img, imgIndex) => {
+          // 如果有多张图片，使用第一张的 src，或者根据索引使用不同的值
+          if (imgIndex === 0 || !Array.isArray(value)) {
+            img.src = finalValue;
+          }
           
-          // 如果是图片字段，检查是否有对应的 transform
-          // 对于单个图片字段，使用 fieldName_transform_0
-          const transformKey = `${fieldName}_transform_0`;
+          // 应用该图片的 transform（如果有），否则清除 transform
+          const transformKey = `${fieldName}_transform_${imgIndex}`;
           const savedTransform = edits[transformKey];
           if (savedTransform) {
             img.style.transform = String(savedTransform);
             img.style.transformOrigin = 'center center';
+          } else {
+            // 如果没有保存的 transform，清除 transform（恢复到默认状态）
+            img.style.transform = '';
+            img.style.transformOrigin = '';
           }
-        } else {
-          element.textContent = finalValue;
-        }
+        });
+      } else {
+        // 非图片字段，只更新第一个元素
+        allElements[0].textContent = finalValue;
       }
     });
     
@@ -415,12 +430,16 @@ export const applyJsonDataToIframe = (
             img.src = src;
             img.style.display = "";
             
-            // 应用该图片的 transform（如果有）
+            // 应用该图片的 transform（如果有），否则清除 transform
             const transformKey = `product_main_src_transform_${idx}`;
             const savedTransform = edits[transformKey];
             if (savedTransform) {
               img.style.transform = String(savedTransform);
               img.style.transformOrigin = 'center center';
+            } else {
+              // 如果没有保存的 transform，清除 transform（恢复到默认状态）
+              img.style.transform = '';
+              img.style.transformOrigin = '';
             }
           });
 
@@ -523,25 +542,36 @@ export const applyJsonDataToIframe = (
           fieldName === 'gift_products_src') return;
       if (Array.isArray(value)) return;
 
-      const element = iframeDoc.querySelector(`[data-field="${fieldName}"]`) as HTMLElement;
-      if (element) {
-        const finalValue = edits[fieldName] !== undefined ? edits[fieldName] : String(value);
-        
-        if (element.tagName === "IMG") {
-          const img = element as HTMLImageElement;
-          img.src = finalValue;
+      // 查找所有匹配的元素（可能有多张图片）
+      const allElements = Array.from(iframeDoc.querySelectorAll(`[data-field="${fieldName}"]`)) as HTMLElement[];
+      if (allElements.length === 0) return;
+      
+      const finalValue = edits[fieldName] !== undefined ? edits[fieldName] : String(value);
+      
+      // 如果是图片字段，需要分别处理每张图片
+      if (allElements[0].tagName === "IMG") {
+        const imgElements = allElements.filter(el => el.tagName === "IMG") as HTMLImageElement[];
+        imgElements.forEach((img, imgIndex) => {
+          // 如果有多张图片，使用第一张的 src，或者根据索引使用不同的值
+          if (imgIndex === 0 || !Array.isArray(value)) {
+            img.src = finalValue;
+          }
           
-          // 如果是图片字段，检查是否有对应的 transform
-          // 对于单个图片字段，使用 fieldName_transform_0
-          const transformKey = `${fieldName}_transform_0`;
+          // 应用该图片的 transform（如果有），否则清除 transform
+          const transformKey = `${fieldName}_transform_${imgIndex}`;
           const savedTransform = edits[transformKey];
           if (savedTransform) {
             img.style.transform = String(savedTransform);
             img.style.transformOrigin = 'center center';
+          } else {
+            // 如果没有保存的 transform，清除 transform（恢复到默认状态）
+            img.style.transform = '';
+            img.style.transformOrigin = '';
           }
-        } else {
-          element.textContent = finalValue;
-        }
+        });
+      } else {
+        // 非图片字段，只更新第一个元素
+        allElements[0].textContent = finalValue;
       }
     });
     
