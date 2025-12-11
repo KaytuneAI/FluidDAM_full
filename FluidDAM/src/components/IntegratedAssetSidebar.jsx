@@ -6,8 +6,10 @@ import LoadCanvasButton from './LoadCanvasButton.jsx';
 import SaveCanvasButton from './SaveCanvasButton.jsx';
 import ShareCanvasButton from './ShareCanvasButton.jsx';
 import FormatBrushButton from './FormatBrushButton.jsx';
+import ImageFormatBrushButton from './ImageFormatBrushButton.jsx';
 import BatchReplaceButton from './BatchReplaceButton.jsx';
 import { getIconPath } from '../utils/iconPath.js';
+import { navigateToHome } from '../utils/navigation.js';
 
 export default function IntegratedAssetSidebar({ editor, selectedFrame, setIsLoading, platform = "TM", width, onReset, collapsed, onToggleCollapse, onScrollToAsset }) {
   const [usedAssetIds, setUsedAssetIds] = useState(new Set());
@@ -212,23 +214,35 @@ export default function IntegratedAssetSidebar({ editor, selectedFrame, setIsLoa
     <div style={{
       ...sidebarStyles.container,
       width: width,
-      borderLeft: `2px solid #007bff`
+      borderLeft: `2px solid #007bff`,
+      display: "flex",
+      flexDirection: "column",
+      height: "100%",
+      overflow: "hidden"
     }}>
-      {/* 顶部操作按钮区域 */}
+      {/* 顶部操作按钮区域 - 固定在顶部 */}
       <div style={{
         padding: "12px",
         borderBottom: "1px solid #e5e7eb",
         display: "flex",
         flexDirection: "column",
-        gap: 8
+        gap: 8,
+        flexShrink: 0,
+        background: "#fff",
+        zIndex: 10
       }}>
         {/* Logo 区域 */}
-        <div style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          marginBottom: 4
-        }}>
+        <div 
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            marginBottom: 4,
+            cursor: "pointer"
+          }}
+          onClick={navigateToHome}
+          title="返回主页"
+        >
           <img 
             src={encodeURI(getIconPath('image/kaytuneai logo.png'))} 
             alt="Kaytune AI Logo" 
@@ -252,6 +266,7 @@ export default function IntegratedAssetSidebar({ editor, selectedFrame, setIsLoa
           <SaveCanvasButton editor={editor} />
           <ShareCanvasButton editor={editor} />
           <FormatBrushButton editor={editor} iconSrc={getIconPath('icons/resize.png')} />
+          <ImageFormatBrushButton editor={editor} />
           <button 
             onClick={onReset}
             style={{
@@ -278,8 +293,13 @@ export default function IntegratedAssetSidebar({ editor, selectedFrame, setIsLoa
         </div>
       </div>
 
-      {/* 素材预览区域 */}
-      <div ref={assetListRef} style={sidebarStyles.list}>
+      {/* 素材预览区域 - 可滚动 */}
+      <div ref={assetListRef} style={{
+        ...sidebarStyles.list,
+        flex: 1,
+        overflowY: "auto",
+        overflowX: "hidden"
+      }}>
         {assets.map((a) => {
           const name = a?.props?.name || a?.props?.src?.split("/").slice(-1)[0] || a.id;
           const isUsed = usedAssetIds.has(a.id);

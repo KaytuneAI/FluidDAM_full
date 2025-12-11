@@ -23,35 +23,43 @@ export default function App() {
     navigateToHome();
   };
 
+  // 检查是否在 SpotStudio 模式
+  const isSpotStudio = window.location.pathname.includes('/spotstudio') || 
+                       window.location.pathname === '/' ||
+                       (!window.location.pathname.includes('/bannergen') && 
+                        !window.location.pathname.includes('/link'));
+
   return (
     <ErrorBoundary>
-      <FloatingMenu
-        items={[
-          {
-            label: 'Home',
-            description: '返回主页',
-            onClick: handleNavigateToHome,
-          },
-          {
-            label: 'Link',
-            description: '素材链接',
-            onClick: handleNavigateToLink,
-          },
-          {
-            label: 'BannerGen',
-            description: '素材组装',
-            onClick: handleNavigateToBannerGen,
-          },
-          {
-            label: 'SpotStudio',
-            description: '排期管理',
-            onClick: handleNavigateToSpotStudio,
-            active: true, // 当前页面
-          },
-        ]}
-        triggerHeight={60}
-        logoUrl={getIconPath('image/kaytuneai logo.png')}
-      />
+      {!isSpotStudio && (
+        <FloatingMenu
+          items={[
+            {
+              label: 'Home',
+              description: '返回主页',
+              onClick: handleNavigateToHome,
+            },
+            {
+              label: 'Link',
+              description: '素材链接',
+              onClick: handleNavigateToLink,
+            },
+            {
+              label: 'BannerGen',
+              description: '素材组装',
+              onClick: handleNavigateToBannerGen,
+            },
+            {
+              label: 'SpotStudio',
+              description: '排期管理',
+              onClick: handleNavigateToSpotStudio,
+              active: false,
+            },
+          ]}
+          triggerHeight={60}
+          logoUrl={getIconPath('image/kaytuneai logo.png')}
+        />
+      )}
       <MainCanvas />
     </ErrorBoundary>
   );
