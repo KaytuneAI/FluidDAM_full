@@ -12,6 +12,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@volcengine/openapi": "^1.33.0",
+    "dotenv": "^17.2.3",
     "exceljs": "^4.4.0",
     "express": "^4.18.2",
     "fast-xml-parser": "^5.2.5",

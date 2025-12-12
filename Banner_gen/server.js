@@ -4,6 +4,10 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import multer from 'multer'
 import cors from 'cors'
+import dotenv from 'dotenv'
+
+// 加载 .env 文件
+dotenv.config()
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -198,6 +202,128 @@ app.get('/api/get-share/:shareId', (req, res) => {
   } catch (error) {
     console.error('获取分享文件时出错:', error)
     res.status(500).json({ success: false, message: '获取分享失败', error: error.message })
+  }
+})
+
+// 即梦 AI 图片生成代理端点（解决 CORS 问题）
+app.post('/api/jimeng-ai/generate', async (req, res) => {
+  try {
+    const { prompt, imageUrl, width, height, style, negativePrompt } = req.body
+
+    if (!prompt) {
+      return res.status(400).json({ success: false, error: '提示词不能为空' })
+    }
+
+    // 从环境变量获取即梦 AI 配置
+    const apiKey = process.env.VITE_JIMENG_AI_API_KEY || process.env.JIMENG_AI_API_KEY
+    const apiSecret = process.env.VITE_JIMENG_AI_API_SECRET || process.env.JIMENG_AI_API_SECRET
+    const baseUrl = process.env.VITE_JIMENG_AI_BASE_URL || process.env.JIMENG_AI_BASE_URL || 'https://visual.volcengineapi.com'
+
+    if (!apiKey) {
+      return res.status(500).json({ success: false, error: '即梦 AI API Key 未配置' })
+    }
+
+    // 构建请求体
+    const requestBody = {
+      prompt: prompt,
+      width: width || 1024,
+      height: height || 1024,
+    }
+
+    // 如果有图片 URL，说明是图生图
+    if (imageUrl) {
+      // 如果是 base64，直接使用；如果是 URL，需要先下载
+      if (imageUrl.startsWith('data:image')) {
+        requestBody.image = imageUrl
+      } else {
+        // 下载图片并转换为 base64
+        try {
+          const imageResponse = await fetch(imageUrl)
+          const imageBlob = await imageResponse.blob()
+          const imageBuffer = Buffer.from(await imageBlob.arrayBuffer())
+          const imageBase64 = `data:${imageBlob.type};base64,${imageBuffer.toString('base64')}`
+          requestBody.image = imageBase64
+        } catch (error) {
+          console.error('下载图片失败:', error)
+          return res.status(400).json({ success: false, error: '图片下载失败' })
+        }
+      }
+      requestBody.mode = 'image_to_image'
+    } else {
+      requestBody.mode = 'text_to_image'
+    }
+
+    // 如果有负面提示词
+    if (negativePrompt) {
+      requestBody.negative_prompt = negativePrompt
+    }
+
+    // 如果有风格
+    if (style) {
+      requestBody.style = style
+    }
+
+    // 构建请求头
+    const headers = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    }
+
+    // 如果有 API Secret，可能需要签名（根据即梦 AI 文档实现）
+    if (apiSecret) {
+      // TODO: 根据即梦 AI 文档实现签名逻辑
+      // headers['X-Signature'] = generateSignature(apiSecret, requestBody)
+      headers['X-Access-Key'] = apiKey
+    }
+
+    console.log(`[即梦 AI] 调用 API: ${baseUrl}/api/v1/image/generate`)
+    console.log(`[即梦 AI] 请求体:`, { ...requestBody, image: requestBody.image ? '[base64 image]' : undefined })
+
+    // 发送请求到即梦 AI API
+    const response = await fetch(`${baseUrl}/api/v1/image/generate`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(requestBody),
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      let errorData
+      try {
+        errorData = JSON.parse(errorText)
+      } catch {
+        errorData = { message: errorText || '请求失败' }
+      }
+      console.error('[即梦 AI] API 调用失败:', errorData)
+      return res.status(response.status).json({
+        success: false,
+        error: errorData.message || errorData.error || `HTTP error! status: ${response.status}`,
+      })
+    }
+
+    const data = await response.json()
+
+    // 根据即梦 AI 的响应格式解析结果
+    if (data.code === 0 || data.success === true || data.result) {
+      const resultData = data.data || data.result || data
+      res.json({
+        success: true,
+        imageUrl: resultData.image_url || resultData.image || resultData.url,
+        imageBase64: resultData.image_base64 || resultData.image,
+        taskId: resultData.task_id || resultData.taskId,
+      })
+    } else {
+      res.json({
+        success: false,
+        error: data.message || data.error || data.msg || '生成失败',
+      })
+    }
+  } catch (error) {
+    console.error('[即梦 AI] 代理调用失败:', error)
+    res.status(500).json({
+      success: false,
+      error: error.message || '生成失败，请检查网络连接和 API 配置',
+    })
   }
 })
 

@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
+import JSZip from "jszip";
 import { TemplateField } from "../BannerBatchPage/types";
 import { buildSrcDoc, extractCssFromHtml } from "../BannerBatchPage/htmlUtils";
 import { processZipFile } from "../BannerBatchPage/zipHandler";
@@ -13,6 +14,7 @@ import {
   type LinkToBannerGenPayload,
 } from "@shared/utils/sessionBus";
 import { BannerData } from "../../types";
+import { generateImageWithJimengAi, enrichPrompt } from "../../utils/jimengAi";
 import "./TemplateGenPage.css";
 
 export const TemplateGenPage: React.FC = () => {
@@ -39,16 +41,175 @@ export const TemplateGenPage: React.FC = () => {
   const [overlaySize, setOverlaySize] = useState<{ width: number; height: number } | null>(null); // 虚线边框尺寸
   const backgroundThumbRef = useRef<HTMLDivElement>(null);
   
+  // 文生图相关状态
+  const [showBackgroundOnly, setShowBackgroundOnly] = useState<boolean>(false); // 仅显示背景图
+  const [imageGenPrompt, setImageGenPrompt] = useState<string>(""); // 文生图提示词
+  const [isGenerating, setIsGenerating] = useState<boolean>(false); // 是否正在生成
+  const [generationError, setGenerationError] = useState<string>(""); // 生成错误信息
+  
+  // 原始模板状态（用于尺寸切换时恢复）
+  const [originalHtmlContent, setOriginalHtmlContent] = useState<string>("");
+  const [originalCssContent, setOriginalCssContent] = useState<string>("");
+  const [originalIframeSize, setOriginalIframeSize] = useState<{ width: number; height: number } | null>(null);
+  const [originalBackgroundPosition, setOriginalBackgroundPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [originalBackgroundSize, setOriginalBackgroundSize] = useState<number>(100);
+  
+  // 缩放所有元素以适应新尺寸（保持宽高比，确保两边都能 fit 到新尺寸内）
+  // 目标：不丢失任何元素，缩放原图直到长宽两边都可以 fit 到新尺寸内
+  const scaleAllElementsToFit = useCallback((targetWidth: number, targetHeight: number) => {
+    if (!iframeSize || !previewIframeRef.current) return;
+    
+    const currentWidth = iframeSize.width;
+    const currentHeight = iframeSize.height;
+    
+    // 如果尺寸完全一样，不需要缩放
+    if (currentWidth === targetWidth && currentHeight === targetHeight) {
+      return;
+    }
+    
+    // 计算缩放比例：保持宽高比，确保长宽两边都可以 fit 到新尺寸内
+    // 取较小的比例，这样缩放后的尺寸可以完全 fit 到目标尺寸内
+    // 例如：当前 1000x800，目标 500x500，scale = min(500/1000, 500/800) = 0.5
+    // 缩放后内容尺寸为 500x400，可以完全 fit 到 500x500 内
+    const scaleX = targetWidth / currentWidth;
+    const scaleY = targetHeight / currentHeight;
+    const scale = Math.min(scaleX, scaleY); // 取较小的比例，确保两个边都能 fit
+    
+    try {
+      const iframeDoc = previewIframeRef.current.contentDocument || previewIframeRef.current.contentWindow?.document;
+      if (!iframeDoc) return;
+      
+      // 缩放所有有 data-field 的元素
+      const allFieldElements = Array.from(iframeDoc.querySelectorAll('[data-field]')) as HTMLElement[];
+      allFieldElements.forEach((element) => {
+        const currentTransform = element.style.transform || '';
+        
+        // 解析当前的 transform
+        let translateX = 0;
+        let translateY = 0;
+        let scaleValue = 1;
+        
+        const translateMatch = currentTransform.match(/translate\(([-\d.]+)px,\s*([-\d.]+)px\)/);
+        if (translateMatch) {
+          translateX = parseFloat(translateMatch[1]) || 0;
+          translateY = parseFloat(translateMatch[2]) || 0;
+        }
+        const scaleMatch = currentTransform.match(/scale\(([\d.]+)\)/);
+        if (scaleMatch) {
+          scaleValue = parseFloat(scaleMatch[1]) || 1;
+        }
+        
+        // 应用缩放：位置和缩放值都要乘以 scale
+        const newTranslateX = translateX * scale;
+        const newTranslateY = translateY * scale;
+        const newScale = scaleValue * scale;
+        
+        const newTransform = `translate(${newTranslateX}px, ${newTranslateY}px) scale(${newScale})`;
+        element.style.transform = newTransform;
+      });
+      
+      // 缩放背景位置（背景大小是百分比，不需要缩放）
+      if (selectedBackground) {
+        const newBgPositionX = backgroundPosition.x * scale;
+        const newBgPositionY = backgroundPosition.y * scale;
+        
+        setBackgroundPosition({ x: newBgPositionX, y: newBgPositionY });
+        // backgroundSize 是百分比，保持不变
+        // 背景调整会在 iframeSize 和 overlaySize 更新后通过 useEffect 自动应用
+      }
+      
+    } catch (e) {
+      console.warn('缩放元素失败:', e);
+    }
+  }, [iframeSize, selectedBackground, backgroundPosition, backgroundSize]);
+
+  // 从原始模板恢复并应用到新尺寸
+  const restoreFromOriginalAndResize = useCallback((targetWidth: number, targetHeight: number) => {
+    if (!originalHtmlContent || !originalCssContent || !originalIframeSize) {
+      // 如果没有原始模板，使用当前逻辑（向后兼容）
+      if (iframeSize && (iframeSize.width !== targetWidth || iframeSize.height !== targetHeight)) {
+        scaleAllElementsToFit(targetWidth, targetHeight);
+      }
+      setIframeSize({ width: targetWidth, height: targetHeight });
+      return;
+    }
+
+    // 从原始模板重新开始
+    setHtmlContent(originalHtmlContent);
+    setCssContent(originalCssContent);
+    setBackgroundPosition(originalBackgroundPosition);
+    setBackgroundSize(originalBackgroundSize);
+
+    // 计算从原始尺寸到目标尺寸的缩放比例
+    const scaleX = targetWidth / originalIframeSize.width;
+    const scaleY = targetHeight / originalIframeSize.height;
+    const scale = Math.min(scaleX, scaleY); // 取较小的比例，确保两个边都能 fit
+
+    // 设置新尺寸（这会触发 iframe 重新渲染）
+    setIframeSize({ width: targetWidth, height: targetHeight });
+
+    // 等待 iframe 内容完全加载后，应用缩放
+    // 使用多个延迟确保内容已渲染
+    const applyScale = () => {
+      if (!previewIframeRef.current) return;
+
+      try {
+        const iframeDoc = previewIframeRef.current.contentDocument || previewIframeRef.current.contentWindow?.document;
+        if (!iframeDoc) return;
+
+        // 检查是否有内容
+        const body = iframeDoc.body;
+        if (!body || body.children.length === 0) return;
+
+        // 重置所有元素的 transform，然后应用新的缩放
+        const allFieldElements = Array.from(iframeDoc.querySelectorAll('[data-field]')) as HTMLElement[];
+        allFieldElements.forEach((element) => {
+          // 重置 transform（从原始状态开始）
+          element.style.transform = '';
+          
+          // 应用新的缩放
+          const newTransform = `scale(${scale})`;
+          element.style.transform = newTransform;
+        });
+
+        // 缩放背景位置
+        if (selectedBackground) {
+          const newBgPositionX = originalBackgroundPosition.x * scale;
+          const newBgPositionY = originalBackgroundPosition.y * scale;
+          setBackgroundPosition({ x: newBgPositionX, y: newBgPositionY });
+        }
+      } catch (e) {
+        console.warn('恢复并缩放模板失败:', e);
+      }
+    };
+
+    // 使用多个延迟确保 iframe 完全加载
+    setTimeout(applyScale, 100);
+    setTimeout(applyScale, 300);
+    setTimeout(applyScale, 600);
+  }, [originalHtmlContent, originalCssContent, originalIframeSize, originalBackgroundPosition, originalBackgroundSize, iframeSize, scaleAllElementsToFit, selectedBackground]);
+
   // 处理尺寸选择
   const handleSizeChange = useCallback((size: '800x800' | '750x1000' | 'custom') => {
     setTemplateSize(size);
+    
+    let targetWidth: number;
+    let targetHeight: number;
+    
     if (size === '800x800') {
-      setIframeSize({ width: 800, height: 800 });
+      targetWidth = 800;
+      targetHeight = 800;
     } else if (size === '750x1000') {
-      setIframeSize({ width: 750, height: 1000 });
+      targetWidth = 750;
+      targetHeight = 1000;
+    } else {
+      // custom 时保持当前 customSize，等待用户输入
+      return;
     }
-    // custom 时保持当前 customSize，等待用户输入
-  }, []);
+    
+    // 从原始模板恢复并应用到新尺寸
+    restoreFromOriginalAndResize(targetWidth, targetHeight);
+  }, [restoreFromOriginalAndResize]);
   
   // 处理自定义尺寸输入
   const handleCustomSizeChange = useCallback((value: string) => {
@@ -59,10 +220,11 @@ export const TemplateGenPage: React.FC = () => {
       const width = parseInt(match[1], 10);
       const height = parseInt(match[2], 10);
       if (width > 0 && height > 0) {
-        setIframeSize({ width, height });
+        // 从原始模板恢复并应用到新尺寸
+        restoreFromOriginalAndResize(width, height);
       }
     }
-  }, []);
+  }, [restoreFromOriginalAndResize]);
 
   // 应用背景调整到实际的 iframe
   // 将右侧小图中图片相对于虚线边框的位置和缩放，按比例转换到左侧大图
@@ -136,9 +298,6 @@ export const TemplateGenPage: React.FC = () => {
   // 素材面板宽度和收起状态
   const [assetSidebarWidth, setAssetSidebarWidth] = useState(280);
   const [assetSidebarCollapsed, setAssetSidebarCollapsed] = useState(false);
-  
-  // 编辑模式：是否处于模板编辑状态
-  const [isEditMode, setIsEditMode] = useState<boolean>(false);
 
   const templateInputRef = useRef<HTMLInputElement>(null);
   const previewIframeRef = useRef<HTMLIFrameElement>(null);
@@ -196,7 +355,7 @@ export const TemplateGenPage: React.FC = () => {
     };
   }, [cssContent]);
 
-  // 调整 iframe 尺寸以匹配内容
+  // 调整 iframe 尺寸以匹配内容（显示原始尺寸，超出视口时使用滚动条）
   const adjustIframeSize = useCallback(() => {
     const iframe = previewIframeRef.current;
     if (!iframe) return;
@@ -212,7 +371,7 @@ export const TemplateGenPage: React.FC = () => {
         const html = iframeDoc.documentElement;
 
         if (body && html) {
-          // 获取内容的实际尺寸
+          // 获取内容的实际尺寸（原始像素尺寸）
           const width = Math.max(
             body.scrollWidth,
             body.offsetWidth,
@@ -228,7 +387,8 @@ export const TemplateGenPage: React.FC = () => {
             html.offsetHeight
           );
 
-          // 设置 iframe 尺寸
+          // 直接使用原始尺寸，不进行缩放
+          // 如果超出视口，通过 CSS overflow 显示滚动条
           if (width > 0 && height > 0) {
             setIframeSize({ width, height });
           }
@@ -257,6 +417,19 @@ export const TemplateGenPage: React.FC = () => {
       return () => clearTimeout(timer);
     }
   }, [htmlContent, cssContent, adjustIframeSize]);
+
+
+  // 当 iframeSize 首次设置时，保存为原始尺寸（仅在模板首次加载时）
+  useEffect(() => {
+    if (iframeSize && !originalIframeSize && htmlContent) {
+      // 这是首次加载模板，保存原始状态
+      setOriginalHtmlContent(htmlContent);
+      setOriginalCssContent(cssContent);
+      setOriginalIframeSize(iframeSize);
+      setOriginalBackgroundPosition(backgroundPosition);
+      setOriginalBackgroundSize(backgroundSize);
+    }
+  }, [iframeSize, htmlContent, cssContent, backgroundPosition, backgroundSize, originalIframeSize]);
 
   // 当模板尺寸变化时，自动调整背景图片以填满新尺寸
   useEffect(() => {
@@ -382,6 +555,214 @@ export const TemplateGenPage: React.FC = () => {
     };
   }, [selectedBackground, applyBackgroundAdjustment]);
 
+  // 当 overlaySize 更新后，自动应用背景调整（用于尺寸切换后的背景调整）
+  useEffect(() => {
+    if (!selectedBackground || !overlaySize || !iframeSize) return;
+    
+    // 延迟执行，确保 overlaySize 已经更新
+    const timer = setTimeout(() => {
+      applyBackgroundAdjustment(selectedBackground, backgroundPosition, backgroundSize);
+    }, 100);
+    
+    return () => clearTimeout(timer);
+  }, [overlaySize, iframeSize, selectedBackground, backgroundPosition, backgroundSize, applyBackgroundAdjustment]);
+
+  // 仅显示背景图功能：当选中时，隐藏所有非背景元素，并应用背景调整（与尺寸切换时相同的逻辑）
+  useEffect(() => {
+    if (!previewIframeRef.current || !htmlContent) return;
+
+    const iframeDoc = previewIframeRef.current.contentDocument || previewIframeRef.current.contentWindow?.document;
+    if (!iframeDoc) return;
+
+    const container = iframeDoc.querySelector('.container') as HTMLElement;
+    if (!container) return;
+
+    // 获取所有需要隐藏的元素：
+    // 1. 所有有 data-field 的元素
+    // 2. container 内部的所有直接子元素（除了背景图本身）
+    const fieldElements = Array.from(iframeDoc.querySelectorAll('[data-field]')) as HTMLElement[];
+    const containerChildren = Array.from(container.children) as HTMLElement[];
+    
+    if (showBackgroundOnly) {
+      // 隐藏所有有 data-field 的元素
+      fieldElements.forEach((el) => {
+        el.style.display = 'none';
+      });
+      
+      // 隐藏 container 内部的所有直接子元素（这些可能是文本、图片等非背景元素）
+      containerChildren.forEach((el) => {
+        el.style.display = 'none';
+      });
+      
+      // 应用与尺寸切换时相同的背景调整逻辑
+      if (selectedBackground && iframeSize) {
+        // 确保容器尺寸匹配 iframe 尺寸
+        container.style.width = `${iframeSize.width}px`;
+        container.style.height = `${iframeSize.height}px`;
+        
+        // 如果有背景调整参数，应用它们（使用 applyBackgroundAdjustment）
+        if (overlaySize) {
+          applyBackgroundAdjustment(selectedBackground, backgroundPosition, backgroundSize);
+        } else {
+          // 如果没有 overlaySize，使用默认的背景设置（cover 模式）
+          container.style.backgroundImage = `url("${selectedBackground}")`;
+          container.style.backgroundSize = 'cover';
+          container.style.backgroundPosition = 'center center';
+          container.style.backgroundRepeat = 'no-repeat';
+        }
+      }
+    } else {
+      // 恢复显示所有元素
+      fieldElements.forEach((el) => {
+        el.style.display = '';
+      });
+      containerChildren.forEach((el) => {
+        el.style.display = '';
+      });
+      
+      // 恢复背景调整（如果有选中的背景）
+      if (selectedBackground && overlaySize) {
+        applyBackgroundAdjustment(selectedBackground, backgroundPosition, backgroundSize);
+      }
+    }
+
+    // 清理函数：恢复显示
+    return () => {
+      fieldElements.forEach((el) => {
+        el.style.display = '';
+      });
+      containerChildren.forEach((el) => {
+        el.style.display = '';
+      });
+    };
+  }, [showBackgroundOnly, htmlContent, selectedBackground, iframeSize, overlaySize, backgroundPosition, backgroundSize, applyBackgroundAdjustment]);
+
+  // 处理文生图生成
+  const handleImageGeneration = useCallback(async () => {
+    if (!imageGenPrompt.trim()) {
+      setGenerationError('请输入提示词');
+      return;
+    }
+
+    if (!iframeSize) {
+      setGenerationError('模板尺寸未设置');
+      return;
+    }
+
+    setIsGenerating(true);
+    setGenerationError('');
+
+    try {
+      // 如果有选中的背景图，使用它（图生图）；否则纯文生图创建新背景
+      const isImageToImage = !!selectedBackground;
+
+      // 增强提示词
+      const enrichedPrompt = enrichPrompt(
+        imageGenPrompt,
+        iframeSize.width,
+        iframeSize.height,
+        isImageToImage
+      );
+
+      // 调用即梦 AI API
+      const result = await generateImageWithJimengAi({
+        prompt: enrichedPrompt,
+        imageUrl: selectedBackground || undefined, // 如果有选中的背景图，使用图生图；否则纯文生图
+        width: iframeSize.width,
+        height: iframeSize.height,
+        negativePrompt: '低质量、模糊、变形、扭曲',
+      });
+
+      if (result.success && (result.imageUrl || result.imageBase64)) {
+        // 更新背景图片
+        // 处理 base64：如果返回的是纯 base64（没有 data:image 前缀），需要添加前缀
+        // 如果 base64 太大（>2MB），使用 Blob URL 避免 431 错误
+        let newBackgroundUrl: string;
+        if (result.imageUrl) {
+          newBackgroundUrl = result.imageUrl;
+        } else if (result.imageBase64) {
+          // 检查是否已经有 data:image 前缀
+          if (result.imageBase64.startsWith('data:image')) {
+            // 如果 base64 太大（>2MB），转换为 Blob URL
+            const base64Data = result.imageBase64.split(',')[1] || result.imageBase64;
+            const sizeInBytes = (base64Data.length * 3) / 4; // base64 大小估算
+            if (sizeInBytes > 2 * 1024 * 1024) { // 2MB
+              // 使用 Blob URL 避免 431 错误
+              try {
+                const byteCharacters = atob(base64Data);
+                const byteNumbers = new Array(byteCharacters.length);
+                for (let i = 0; i < byteCharacters.length; i++) {
+                  byteNumbers[i] = byteCharacters.charCodeAt(i);
+                }
+                const byteArray = new Uint8Array(byteNumbers);
+                const blob = new Blob([byteArray], { type: 'image/png' });
+                newBackgroundUrl = URL.createObjectURL(blob);
+              } catch (error) {
+                console.error('创建 Blob URL 失败，使用 data URL:', error);
+                newBackgroundUrl = result.imageBase64;
+              }
+            } else {
+              newBackgroundUrl = result.imageBase64;
+            }
+          } else {
+            // 纯 base64，添加前缀（默认 PNG 格式）
+            const sizeInBytes = (result.imageBase64.length * 3) / 4;
+            if (sizeInBytes > 2 * 1024 * 1024) { // 2MB
+              // 使用 Blob URL
+              try {
+                const byteCharacters = atob(result.imageBase64);
+                const byteNumbers = new Array(byteCharacters.length);
+                for (let i = 0; i < byteCharacters.length; i++) {
+                  byteNumbers[i] = byteCharacters.charCodeAt(i);
+                }
+                const byteArray = new Uint8Array(byteNumbers);
+                const blob = new Blob([byteArray], { type: 'image/png' });
+                newBackgroundUrl = URL.createObjectURL(blob);
+              } catch (error) {
+                console.error('创建 Blob URL 失败，使用 data URL:', error);
+                newBackgroundUrl = `data:image/png;base64,${result.imageBase64}`;
+              }
+            } else {
+              newBackgroundUrl = `data:image/png;base64,${result.imageBase64}`;
+            }
+          }
+        } else {
+          setGenerationError('未返回图片数据');
+          return;
+        }
+        
+        // 更新背景列表
+        setBackgrounds((prev) => {
+          const updated = [...prev];
+          // 如果有选中的背景图，替换它；否则添加新图片
+          if (selectedBackground) {
+            const currentIndex = updated.indexOf(selectedBackground);
+            if (currentIndex >= 0) {
+              updated[currentIndex] = newBackgroundUrl;
+            } else {
+              updated.push(newBackgroundUrl);
+            }
+          } else {
+            // 纯文生图：添加新背景图
+            updated.push(newBackgroundUrl);
+          }
+          return updated;
+        });
+
+        // 设置为当前选中的背景
+        setSelectedBackground(newBackgroundUrl);
+        setSuccess('背景图生成成功！');
+      } else {
+        setGenerationError(result.error || '生成失败，请重试');
+      }
+    } catch (error: any) {
+      console.error('生成图片失败:', error);
+      setGenerationError(error.message || '生成失败，请检查网络连接和 API 配置');
+    } finally {
+      setIsGenerating(false);
+    }
+  }, [imageGenPrompt, selectedBackground, iframeSize]);
+
   // 统一处理模板上传（支持 ZIP 和 HTML）
   const handleTemplateUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -409,6 +790,11 @@ export const TemplateGenPage: React.FC = () => {
         // 提取背景图片
         const bgImages = extractBackgroundImages(result.html, result.css);
         setBackgrounds(bgImages);
+        
+        // 重置原始模板状态（将在 iframeSize 设置时保存）
+        setOriginalHtmlContent("");
+        setOriginalCssContent("");
+        setOriginalIframeSize(null);
       } else if (fileName.endsWith('.html') || fileName.endsWith('.htm')) {
         // HTML 文件处理（会自动提取 CSS）
         const result = await handleHtmlUploadUtil(
@@ -424,6 +810,11 @@ export const TemplateGenPage: React.FC = () => {
             // 提取背景图片
             const bgImages = extractBackgroundImages(result.html, result.css || "");
             setBackgrounds(bgImages);
+            
+            // 重置原始模板状态（将在 iframeSize 设置时保存）
+            setOriginalHtmlContent("");
+            setOriginalCssContent("");
+            setOriginalIframeSize(null);
           },
           (message) => {
             setError(message);
@@ -864,6 +1255,251 @@ export const TemplateGenPage: React.FC = () => {
     adjustIframeSize();
   }, [htmlContent, adjustIframeSize, handleIframeElementClick]);
 
+  // 保存模板为 ZIP 文件
+  const handleSaveTemplate = useCallback(async () => {
+    if (!htmlContent || !previewIframeRef.current) {
+      setError("没有可保存的模板内容");
+      return;
+    }
+
+    try {
+      setError("");
+      setSuccess("正在保存模板...");
+
+      const iframeDoc = previewIframeRef.current.contentDocument || previewIframeRef.current.contentWindow?.document;
+      if (!iframeDoc) {
+        setError("无法访问预览内容");
+        return;
+      }
+
+      const zip = new JSZip();
+
+      // 1. 获取当前 iframe 中的 HTML（包含所有修改）
+      // 获取 body 内容，但排除我们添加的高亮样式
+      const body = iframeDoc.body;
+      const bodyClone = body.cloneNode(true) as HTMLElement;
+      // 移除高亮类
+      bodyClone.querySelectorAll('.field-highlight').forEach(el => {
+        el.classList.remove('field-highlight');
+      });
+      const currentHtml = bodyClone.innerHTML;
+
+      // 2. 提取 CSS（从 style 标签和原始 CSS 内容）
+      const styleTags = iframeDoc.querySelectorAll('style');
+      let extractedCss = cssContent || "";
+      styleTags.forEach((style) => {
+        const cssText = style.textContent || style.innerHTML;
+        // 排除字段高亮样式和系统添加的样式
+        if (!cssText.includes('field-highlight') && 
+            !cssText.includes('outline: 3px solid') &&
+            !cssText.includes('box-shadow: 0 0 0 2px')) {
+          extractedCss += "\n" + cssText;
+        }
+      });
+
+      // 3. 提取所有资源（图片、字体等）
+      const resourceMap = new Map<string, { data: string; mime: string; ext: string }>();
+      let resourceIndex = 0;
+
+      // 提取图片资源
+      const extractImageFromDataUrl = (dataUrl: string, defaultName: string): string | null => {
+        if (!dataUrl.startsWith('data:')) return null;
+        const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+        if (!match) return null;
+        const mime = match[1];
+        const base64 = match[2];
+        const ext = mime.split('/')[1] || 'png';
+        const fileName = `${defaultName}_${resourceIndex++}.${ext}`;
+        resourceMap.set(fileName, { data: base64, mime, ext });
+        return fileName;
+      };
+
+      // 从所有 img 元素提取图片并记录替换映射
+      const imageReplacements = new Map<string, string>();
+      const images = iframeDoc.querySelectorAll('img');
+      images.forEach((img) => {
+        const src = img.getAttribute('src') || '';
+        if (src.startsWith('data:')) {
+          const fileName = extractImageFromDataUrl(src, `image`);
+          if (fileName) {
+            imageReplacements.set(src, `image/${fileName}`);
+          }
+        }
+      });
+
+      // 从 CSS 中提取字体和图片 URL（data URL）
+      const cssUrlRegex = /url\(["']?(data:[^"')]+)["']?\)/gi;
+      const cssMatches: Array<{ url: string; replacement: string; fullMatch: string }> = [];
+      let cssMatch;
+      while ((cssMatch = cssUrlRegex.exec(extractedCss)) !== null) {
+        const fullMatch = cssMatch[0]; // 完整的 url(...) 匹配
+        const url = cssMatch[1]; // data URL
+        const fileName = extractImageFromDataUrl(url, 'resource');
+        if (fileName) {
+          cssMatches.push({ 
+            url: url, 
+            replacement: `image/${fileName}`, 
+            fullMatch: fullMatch 
+          });
+        }
+      }
+      // 替换所有匹配的 URL（需要替换完整的 url(...) 部分）
+      cssMatches.forEach(({ url, replacement, fullMatch }) => {
+        // 替换完整的 url(...) 为新的路径
+        const newUrl = fullMatch.replace(url, replacement);
+        extractedCss = extractedCss.replace(fullMatch, newUrl);
+      });
+      
+      // 从背景样式中提取图片（如果还没有处理）
+      const container = iframeDoc.querySelector('.container') as HTMLElement;
+      if (container) {
+        const computedStyle = iframeDoc.defaultView?.getComputedStyle(container);
+        const bgImage = computedStyle?.backgroundImage || container.style.backgroundImage;
+        if (bgImage && bgImage.includes('url(')) {
+          const bgUrlMatch = bgImage.match(/url\(["']?(data:[^"')]+)["']?\)/);
+          if (bgUrlMatch) {
+            const dataUrl = bgUrlMatch[1];
+            if (!imageReplacements.has(dataUrl)) {
+              const fileName = extractImageFromDataUrl(dataUrl, 'background');
+              if (fileName) {
+                imageReplacements.set(dataUrl, `image/${fileName}`);
+                // 更新 CSS 中的背景图片
+                const escapedUrl = dataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                extractedCss = extractedCss.replace(
+                  new RegExp(escapedUrl, 'g'),
+                  `image/${fileName}`
+                );
+              }
+            }
+          }
+        }
+      }
+
+      // 4. 更新 HTML 中的图片路径
+      let finalBodyHtml = iframeDoc.body.innerHTML;
+      // 移除高亮类
+      finalBodyHtml = finalBodyHtml.replace(/class="[^"]*field-highlight[^"]*"/g, '');
+      finalBodyHtml = finalBodyHtml.replace(/field-highlight/g, '');
+      
+      // 替换所有图片的 data URL 为相对路径
+      imageReplacements.forEach((newPath, oldDataUrl) => {
+        // 转义特殊字符用于正则替换
+        const escapedUrl = oldDataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        finalBodyHtml = finalBodyHtml.replace(new RegExp(escapedUrl, 'g'), newPath);
+      });
+
+      // 5. 创建目录结构并添加文件
+      // HTML 文件
+      const finalHtmlFileName = htmlFileName || 'index.html';
+      const finalHtml = `<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    ${finalBodyHtml}
+  </body>
+</html>`;
+      zip.file(finalHtmlFileName, finalHtml);
+
+      // CSS 文件
+      const finalCss = extractedCss.trim();
+      if (finalCss) {
+        zip.file('style.css', finalCss);
+      }
+
+      // 资源文件（图片、字体等）
+      if (resourceMap.size > 0) {
+        const imageFolder = zip.folder('image');
+        if (imageFolder) {
+          resourceMap.forEach((resource, fileName) => {
+            try {
+              const binaryString = atob(resource.data);
+              const bytes = new Uint8Array(binaryString.length);
+              for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+              }
+              imageFolder.file(fileName, bytes);
+            } catch (e) {
+              console.warn(`无法处理资源文件 ${fileName}:`, e);
+            }
+          });
+        }
+      }
+      
+      // 提取字体文件（如果有的话，从 CSS 中的 @font-face）
+      // 匹配所有 @font-face 中的 data URL
+      const fontUrlRegex = /url\(["']?(data:[^"')]+)["']?\)/gi;
+      const fontUrls = new Set<string>(); // 用于去重
+      let fontUrlMatch;
+      while ((fontUrlMatch = fontUrlRegex.exec(extractedCss)) !== null) {
+        const fontDataUrl = fontUrlMatch[1];
+        // 只处理字体相关的 MIME 类型
+        if (fontDataUrl.startsWith('data:') && 
+            (fontDataUrl.includes('font') || 
+             fontDataUrl.includes('woff') || 
+             fontDataUrl.includes('otf') || 
+             fontDataUrl.includes('ttf') ||
+             fontDataUrl.includes('eot'))) {
+          fontUrls.add(fontDataUrl);
+        }
+      }
+      
+      const fontsFolder = zip.folder('fonts');
+      fontUrls.forEach((fontDataUrl) => {
+        const fontMatch2 = fontDataUrl.match(/^data:([^;]+);base64,(.+)$/);
+        if (fontMatch2) {
+          const mime = fontMatch2[1];
+          const base64 = fontMatch2[2];
+          let ext = 'ttf';
+          if (mime.includes('woff2')) ext = 'woff2';
+          else if (mime.includes('woff')) ext = 'woff';
+          else if (mime.includes('otf')) ext = 'otf';
+          else if (mime.includes('eot')) ext = 'eot';
+          
+          const fontFileName = `font_${resourceIndex++}.${ext}`;
+          if (fontsFolder) {
+            try {
+              const binaryString = atob(base64);
+              const bytes = new Uint8Array(binaryString.length);
+              for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+              }
+              fontsFolder.file(fontFileName, bytes);
+              // 更新 CSS 中的字体路径（转义特殊字符）
+              const escapedUrl = fontDataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              extractedCss = extractedCss.replace(
+                new RegExp(escapedUrl, 'g'),
+                `fonts/${fontFileName}`
+              );
+            } catch (e) {
+              console.warn(`无法处理字体文件:`, e);
+            }
+          }
+        }
+      });
+
+      // 5. 生成 ZIP 文件并下载
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+      a.download = `template_${timestamp}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      setSuccess(`模板已保存为 ZIP 文件！包含 ${resourceMap.size} 个资源文件`);
+    } catch (err: any) {
+      setError(err.message || "保存模板失败");
+      console.error("保存模板错误:", err);
+    }
+  }, [htmlContent, cssContent, htmlFileName, selectedBackground, previewIframeRef]);
+
   return (
     <div className="template-gen-page">
       <div className="template-gen-header">
@@ -871,7 +1507,7 @@ export const TemplateGenPage: React.FC = () => {
       </div>
 
       {error && (
-        <div className="error-message">
+        <div className="template-gen-error-message">
           {error}
         </div>
       )}
@@ -882,32 +1518,80 @@ export const TemplateGenPage: React.FC = () => {
         {/* 左侧预览区域（画布） */}
         <div className="template-gen-preview">
           {htmlContent ? (
-            <div className="preview-iframe-wrapper">
+            <div className="template-gen-preview-iframe-wrapper">
               <iframe
                 ref={previewIframeRef}
-                className="preview-iframe"
+                className="template-gen-preview-iframe"
                 srcDoc={buildSrcDoc(htmlContent, cssContent)}
                 sandbox="allow-same-origin allow-scripts"
                 style={{
-                  width: iframeSize?.width || 800,
-                  height: iframeSize?.height || 800,
+                  width: iframeSize ? `${iframeSize.width}px` : 'auto',
+                  height: iframeSize ? `${iframeSize.height}px` : 'auto',
                 }}
                 onLoad={handlePreviewIframeLoad}
                 title="Template Preview"
               />
-              {iframeSize && (
-                <div 
-                  className="preview-template-border"
-                  style={{
-                    width: `${iframeSize.width}px`,
-                    height: `${iframeSize.height}px`,
-                  }}
-                />
-              )}
             </div>
           ) : (
-            <div className="preview-placeholder">
+            <div 
+              className="template-gen-preview-placeholder"
+              onClick={() => {
+                templateInputRef.current?.click();
+              }}
+            >
               <p>请先上传模板文件</p>
+              <p className="template-gen-preview-placeholder-hint">点击此区域选择文件</p>
+            </div>
+          )}
+          
+          {/* 文生图功能区域 */}
+          {htmlContent && (
+            <div className="image-gen-section">
+              <div className="image-gen-controls">
+                <label className="image-gen-checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={showBackgroundOnly}
+                    onChange={(e) => setShowBackgroundOnly(e.target.checked)}
+                    className="image-gen-checkbox"
+                  />
+                  <span>仅看背景图</span>
+                </label>
+              </div>
+              <div className="image-gen-input-wrapper">
+                <label className="image-gen-label">文生图提示词：</label>
+                <textarea
+                  className="image-gen-textarea"
+                  value={imageGenPrompt}
+                  onChange={(e) => setImageGenPrompt(e.target.value)}
+                  placeholder="输入提示词，用于生成/修改背景图..."
+                  rows={3}
+                  disabled={isGenerating}
+                />
+              </div>
+              {generationError && (
+                <div className="image-gen-error" style={{ color: 'red', marginTop: '8px', fontSize: '12px' }}>
+                  {generationError}
+                </div>
+              )}
+              <button
+                className="image-gen-button"
+                onClick={handleImageGeneration}
+                disabled={isGenerating || !imageGenPrompt.trim()}
+                style={{
+                  marginTop: '12px',
+                  padding: '8px 16px',
+                  backgroundColor: isGenerating || !imageGenPrompt.trim() ? '#ccc' : '#007bff',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: isGenerating || !imageGenPrompt.trim() ? 'not-allowed' : 'pointer',
+                  width: '100%',
+                }}
+                title={!imageGenPrompt.trim() ? '请输入提示词' : selectedBackground ? '基于当前显示的背景图生成新背景' : '纯文生图，创建新背景'}
+              >
+                {isGenerating ? '生成中...' : selectedBackground ? '基于当前背景生成' : '创建新背景'}
+              </button>
             </div>
           )}
         </div>
@@ -915,7 +1599,7 @@ export const TemplateGenPage: React.FC = () => {
         {/* 中间控制面板（可替换字段） */}
         <div className="template-gen-controls">
           {/* 模板上传 */}
-          <div className="control-section">
+          <div className="template-gen-control-section">
             <h3>上传模板</h3>
             <label className="template-upload-label">
               <input
@@ -923,15 +1607,15 @@ export const TemplateGenPage: React.FC = () => {
                 type="file"
                 accept=".zip,.html,.htm"
                 onChange={handleTemplateUpload}
-                className="file-input"
+                className="template-gen-file-input"
               />
-              <span className="file-input-label">
+              <span className="template-gen-file-input-label">
                 {htmlContent ? `已加载模板 (${htmlFileName})` : "选择 ZIP 或 HTML 文件"}
               </span>
             </label>
             {htmlContent && (
-              <div className="template-info">
-                <p className="template-info-text">
+              <div className="template-gen-info">
+                <p className="template-gen-info-text">
                   {htmlFileName && <span>模板文件: {htmlFileName}</span>}
                   {cssFileName && <span>CSS 文件: {cssFileName}</span>}
                   {templateFields.length > 0 && <span>可替换字段: {templateFields.length} 个</span>}
@@ -941,7 +1625,7 @@ export const TemplateGenPage: React.FC = () => {
           </div>
 
           {/* 模板尺寸 */}
-          <div className="control-section">
+          <div className="template-gen-control-section">
             <h3>模板尺寸</h3>
             <div className="template-size-selector">
               <button
@@ -982,7 +1666,7 @@ export const TemplateGenPage: React.FC = () => {
           </div>
 
           {/* 背景选择 */}
-          <div className="control-section">
+          <div className="template-gen-control-section">
             <h3>背景选择</h3>
             {backgrounds.length > 0 ? (
               backgrounds.map((bgUrl, index) => (
@@ -1089,32 +1773,32 @@ export const TemplateGenPage: React.FC = () => {
 
           {/* 可替换字段列表 */}
           {templateFields.length > 0 && (
-            <div className="control-section">
+            <div className="template-gen-control-section">
               <h3>可替换字段 ({templateFields.length})</h3>
-              <div className="field-list-wrapper">
+              <div className="template-gen-field-list-wrapper">
                 {templateFields.map((f) => (
                   <div
                     key={f.name}
-                    className={`field-item ${selectedField === f.name ? 'selected' : ''}`}
+                    className={`template-gen-field-item ${selectedField === f.name ? 'selected' : ''}`}
                     onClick={() => handleFieldClick(f.name)}
                   >
                     {/* 第一行：中文名字 */}
-                    <div className="field-name">{f.label || f.name}</div>
+                    <div className="template-gen-field-name">{f.label || f.name}</div>
                     
                     {/* 第二行：左右结构 - 左边字段名，右边值 */}
                     {selectedField === f.name ? (
-                      <div className="field-row">
+                      <div className="template-gen-field-row">
                         {/* 左边：字段名（key） */}
-                        <div className="field-key">{f.name}</div>
+                        <div className="template-gen-field-key">{f.name}</div>
                         {/* 右边：可编辑的值 */}
-                        <div className="field-value-wrapper">
+                        <div className="template-gen-field-value-wrapper">
                           {f.name.includes('_src') || f.name.includes('image') ? (
-                            <div className="field-image-input-wrapper">
+                            <div className="template-gen-field-image-input-wrapper">
                               {selectedFieldValue.startsWith('data:image') ? (
                                 <img 
                                   src={selectedFieldValue} 
                                   alt={f.name}
-                                  className="field-image-preview-small"
+                                  className="template-gen-field-image-preview-small"
                                   onError={(e) => {
                                     (e.target as HTMLImageElement).style.display = 'none';
                                   }}
@@ -1122,7 +1806,7 @@ export const TemplateGenPage: React.FC = () => {
                               ) : (
                                 <input
                                   type="text"
-                                  className="field-value-input"
+                                  className="template-gen-field-value-input"
                                   value={selectedFieldValue}
                                   onChange={(e) => {
                                     const newValue = e.target.value;
@@ -1137,7 +1821,7 @@ export const TemplateGenPage: React.FC = () => {
                           ) : (
                             <input
                               type="text"
-                              className="field-value-input"
+                              className="template-gen-field-value-input"
                               value={selectedFieldValue}
                               onChange={(e) => {
                                 const newValue = e.target.value;
@@ -1151,9 +1835,9 @@ export const TemplateGenPage: React.FC = () => {
                         </div>
                       </div>
                     ) : (
-                      <div className="field-row">
-                        <div className="field-key">{f.name}</div>
-                        <div className="field-value-preview">
+                      <div className="template-gen-field-row">
+                        <div className="template-gen-field-key">{f.name}</div>
+                        <div className="template-gen-field-value-preview">
                           {f.name.includes('_src') || f.name.includes('image') ? (
                             (() => {
                               // 尝试从 iframe 中获取图片预览
@@ -1166,14 +1850,14 @@ export const TemplateGenPage: React.FC = () => {
                                       <img 
                                         src={element.src} 
                                         alt={f.name}
-                                        className="field-image-preview-small"
+                                        className="template-gen-field-image-preview-small"
                                         onError={(e) => {
                                           (e.target as HTMLImageElement).style.display = 'none';
                                         }}
                                       />
                                     );
                                   } else {
-                                    return <span className="field-image-url">图片已加载</span>;
+                                    return <span className="template-gen-field-image-url">图片已加载</span>;
                                   }
                                 }
                               }
@@ -1188,13 +1872,13 @@ export const TemplateGenPage: React.FC = () => {
                     
                     {/* 如果被选中，显示控制按钮 */}
                     {selectedField === f.name && (
-                      <div className="field-controls">
+                      <div className="template-gen-field-controls">
                         {/* 位置和大小控制按钮 */}
-                        <div className="image-control-buttons" onClick={(e) => e.stopPropagation()}>
+                        <div className="template-gen-image-control-buttons" onClick={(e) => e.stopPropagation()}>
                           {/* 方向键 - WASD 方式排列，靠左 */}
-                          <div className="dpad-container">
+                          <div className="template-gen-dpad-container">
                             <button
-                              className="image-control-btn dpad-btn dpad-up"
+                              className="template-gen-image-control-btn template-gen-dpad-btn template-gen-dpad-up"
                               title="向上 (W)"
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1203,9 +1887,9 @@ export const TemplateGenPage: React.FC = () => {
                             >
                               ↑
                             </button>
-                            <div className="dpad-middle">
+                            <div className="template-gen-dpad-middle">
                               <button
-                                className="image-control-btn dpad-btn dpad-left"
+                                className="template-gen-image-control-btn template-gen-dpad-btn template-gen-dpad-left"
                                 title="向左 (A)"
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -1215,7 +1899,7 @@ export const TemplateGenPage: React.FC = () => {
                                 ←
                               </button>
                               <button
-                                className="image-control-btn dpad-btn dpad-down"
+                                className="template-gen-image-control-btn template-gen-dpad-btn template-gen-dpad-down"
                                 title="向下 (S)"
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -1225,7 +1909,7 @@ export const TemplateGenPage: React.FC = () => {
                                 ↓
                               </button>
                               <button
-                                className="image-control-btn dpad-btn dpad-right"
+                                className="template-gen-image-control-btn template-gen-dpad-btn template-gen-dpad-right"
                                 title="向右 (D)"
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -1237,9 +1921,9 @@ export const TemplateGenPage: React.FC = () => {
                             </div>
                           </div>
                           {/* 缩放按钮 - 靠右，上面+，下面- */}
-                          <div className="zoom-container">
+                          <div className="template-gen-zoom-container">
                             <button
-                              className="image-control-btn zoom-btn zoom-in"
+                              className="template-gen-image-control-btn template-gen-zoom-btn template-gen-zoom-in"
                               title="放大"
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1249,7 +1933,7 @@ export const TemplateGenPage: React.FC = () => {
                               +
                             </button>
                             <button
-                              className="image-control-btn zoom-btn zoom-out"
+                              className="template-gen-image-control-btn template-gen-zoom-btn template-gen-zoom-out"
                               title="缩小"
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1268,21 +1952,22 @@ export const TemplateGenPage: React.FC = () => {
             </div>
           )}
 
-          {/* 编辑模式切换 */}
-          <div className="control-section">
-            <h3>模板编辑</h3>
-            <button
-              className={`btn-primary ${isEditMode ? 'active' : ''}`}
-              onClick={() => setIsEditMode(!isEditMode)}
-            >
-              {isEditMode ? '退出编辑模式' : '进入编辑模式'}
-            </button>
-            <p className="info-text">
-              {isEditMode 
-                ? '编辑模式：可以直接在预览区域编辑模板元素' 
-                : '点击进入编辑模式，可以直接编辑模板的 HTML 结构'}
-            </p>
-          </div>
+          {/* 保存模板 */}
+          {htmlContent && (
+            <div className="template-gen-control-section">
+              <h3>保存</h3>
+              <button
+                className="template-gen-btn-primary"
+                onClick={handleSaveTemplate}
+                style={{ width: '100%', marginBottom: '10px' }}
+              >
+                💾 保存为 ZIP 文件
+              </button>
+              <p className="template-gen-info-text">
+                将当前模板保存为 ZIP 文件，包含 HTML、CSS、图片和字体等所有资源
+              </p>
+            </div>
+          )}
         </div>
 
         {/* 右侧素材面板 */}
@@ -1313,4 +1998,6 @@ export const TemplateGenPage: React.FC = () => {
     </div>
   );
 };
+
+
 

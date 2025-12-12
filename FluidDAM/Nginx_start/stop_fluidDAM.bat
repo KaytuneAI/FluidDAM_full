@@ -25,8 +25,16 @@ if defined PID (
   echo [INFO] No FluidDAM process found on port %PORT%.
 )
 
+REM Close terminal windows
+echo.
+echo Closing terminal windows...
+powershell -Command "$processes = Get-Process cmd, powershell -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -match 'FluidDAM|API Server' }; if ($processes) { $processes | Stop-Process -Force; Write-Host 'Closed' $processes.Count 'terminal window(s)' } else { Write-Host 'No matching terminal windows found' }"
+powershell -Command "Get-WmiObject Win32_Process | Where-Object { ($_.CommandLine -like '*npm run server*') -and ($_.Name -eq 'cmd.exe' -or $_.Name -eq 'node.exe') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+
 echo ============================================
 echo FluidDAM stop operation completed.
 echo ============================================
-
-pause
+echo.
+echo This window will close in 2 seconds...
+timeout /t 2 /nobreak >nul
+exit

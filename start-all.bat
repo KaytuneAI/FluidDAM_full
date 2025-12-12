@@ -1,5 +1,4 @@
 @echo off
-chcp 65001 >nul
 cd /d "%~dp0"
 echo ========================================
 echo Starting FluidDAM Unified Entry Application...
@@ -31,7 +30,7 @@ if not exist "FluidDAM\node_modules" (
 
 echo Starting Unified Backend API Server (Port 3001)...
 echo   - FluidDAM API
-echo   - Banner_gen API
+echo   - Banner_gen API (including Jimeng AI proxy)
 cd /d "%~dp0FluidDAM"
 start "Unified API Server" cmd /k "cd /d %~dp0FluidDAM && npm run server"
 
@@ -68,7 +67,7 @@ echo.
 echo Standalone Access (for development/debugging):
 echo   - Banner_gen: http://localhost:5174
 echo   - FluidDAM: http://localhost:5173
-echo   - Unified API: http://localhost:3001 (FluidDAM + Banner_gen)
+echo   - Unified API: http://localhost:3001 (FluidDAM + Banner_gen + Jimeng AI proxy)
 echo.
 echo Tip: Recommended to use unified entry - only one port to remember!
 echo.

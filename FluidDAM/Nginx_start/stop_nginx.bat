@@ -34,5 +34,7 @@ if exist nginx.exe (
 echo ============================================
 echo Nginx stop operation completed.
 echo ============================================
-
-pause
+echo.
+echo This window will close in 2 seconds...
+timeout /t 2 /nobreak >nul
+exit
