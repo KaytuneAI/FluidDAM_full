@@ -46,6 +46,7 @@ export const TemplateGenPage: React.FC = () => {
   const [imageGenPrompt, setImageGenPrompt] = useState<string>(""); // 文生图提示词
   const [isGenerating, setIsGenerating] = useState<boolean>(false); // 是否正在生成
   const [generationError, setGenerationError] = useState<string>(""); // 生成错误信息
+  const [originalBackgroundBeforeGen, setOriginalBackgroundBeforeGen] = useState<string | null>(null); // 生成前的原始背景图
   
   // 原始模板状态（用于尺寸切换时恢复）
   const [originalHtmlContent, setOriginalHtmlContent] = useState<string>("");
@@ -637,6 +638,14 @@ export const TemplateGenPage: React.FC = () => {
     };
   }, [showBackgroundOnly, htmlContent, selectedBackground, iframeSize, overlaySize, backgroundPosition, backgroundSize, applyBackgroundAdjustment]);
 
+  // 当背景列表更新时，如果当前没有选中的背景图，自动选中第一个
+  useEffect(() => {
+    if (!selectedBackground && backgrounds.length > 0) {
+      setSelectedBackground(backgrounds[0]);
+      console.log('[TemplateGen] 自动选中第一个背景图', { backgroundUrl: backgrounds[0].substring(0, 50) + '...' });
+    }
+  }, [backgrounds, selectedBackground]);
+
   // 处理文生图生成
   const handleImageGeneration = useCallback(async () => {
     if (!imageGenPrompt.trim()) {
@@ -654,20 +663,93 @@ export const TemplateGenPage: React.FC = () => {
 
     try {
       // 如果有选中的背景图，使用它（图生图）；否则纯文生图创建新背景
-      const isImageToImage = !!selectedBackground;
+      // 如果没有选中背景图，但背景列表不为空，自动使用第一个背景图
+      let actualSelectedBackground = selectedBackground;
+      if (!actualSelectedBackground && backgrounds.length > 0) {
+        actualSelectedBackground = backgrounds[0];
+        console.log('[TemplateGen] 自动选择第一个背景图', { backgroundUrl: actualSelectedBackground.substring(0, 50) + '...' });
+      }
+      
+      // 保存生成前的原始背景图（用于显示在图片选择区域）
+      if (actualSelectedBackground) {
+        setOriginalBackgroundBeforeGen(actualSelectedBackground);
+      }
+      
+      const isImageToImage = !!actualSelectedBackground;
 
       // 增强提示词
+      // 注意：imageDescription 可以后续添加为可选的用户输入字段
+      // 目前使用默认描述，用户可以根据实际图片在前端添加输入框来修改
       const enrichedPrompt = enrichPrompt(
         imageGenPrompt,
         iframeSize.width,
         iframeSize.height,
         isImageToImage
+        // imageDescription: 可以添加一个可选的图片描述输入框
       );
+
+      // 处理图片：如果是 Blob URL，需要转换为 base64；如果是 data URL，直接使用
+      let imageUrlForApi: string | undefined = undefined;
+      let imageBase64ForApi: string | undefined = undefined;
+      
+      console.log('[TemplateGen] 图片处理开始', {
+        hasSelectedBackground: !!actualSelectedBackground,
+        selectedBackgroundType: actualSelectedBackground ? (actualSelectedBackground.startsWith('blob:') ? 'blob' : actualSelectedBackground.startsWith('data:') ? 'data' : 'url') : 'none',
+        selectedBackgroundPrefix: actualSelectedBackground ? actualSelectedBackground.substring(0, 50) : 'none',
+        isImageToImage,
+        backgroundsCount: backgrounds.length
+      });
+      
+      if (actualSelectedBackground) {
+        if (actualSelectedBackground.startsWith('blob:')) {
+          // Blob URL：需要转换为 base64（后端无法直接下载 Blob URL）
+          console.log('[TemplateGen] 检测到 Blob URL，开始转换为 base64...');
+          try {
+            const response = await fetch(actualSelectedBackground);
+            const blob = await response.blob();
+            const reader = new FileReader();
+            const base64Promise = new Promise<string>((resolve, reject) => {
+              reader.onloadend = () => {
+                const base64 = reader.result as string;
+                console.log('[TemplateGen] Blob URL 转换为 base64 成功', { base64Length: base64.length });
+                resolve(base64);
+              };
+              reader.onerror = reject;
+              reader.readAsDataURL(blob);
+            });
+            imageBase64ForApi = await base64Promise;
+          } catch (error) {
+            console.error('[TemplateGen] 转换 Blob URL 为 base64 失败:', error);
+            setGenerationError('图片处理失败，请重试');
+            return;
+          }
+        } else if (actualSelectedBackground.startsWith('data:image')) {
+          // Data URL：直接使用
+          console.log('[TemplateGen] 检测到 Data URL，直接使用', { dataUrlLength: actualSelectedBackground.length });
+          imageBase64ForApi = actualSelectedBackground;
+        } else {
+          // 普通 URL：直接传递
+          console.log('[TemplateGen] 检测到普通 URL，直接传递', { url: actualSelectedBackground.substring(0, 100) });
+          imageUrlForApi = actualSelectedBackground;
+        }
+      } else {
+        console.log('[TemplateGen] 没有选中的背景图，使用文生图模式');
+      }
+
+      console.log('[TemplateGen] 调用即梦 AI API', {
+        hasImageUrl: !!imageUrlForApi,
+        hasImageBase64: !!imageBase64ForApi,
+        mode: isImageToImage ? 'i2i' : 't2i',
+        promptLength: enrichedPrompt.length,
+        promptPreview: enrichedPrompt.substring(0, 100) + '...'
+      });
 
       // 调用即梦 AI API
       const result = await generateImageWithJimengAi({
         prompt: enrichedPrompt,
-        imageUrl: selectedBackground || undefined, // 如果有选中的背景图，使用图生图；否则纯文生图
+        imageUrl: imageUrlForApi, // 普通 URL（如果有）
+        imageBase64: imageBase64ForApi, // base64 或 data URL（如果有）
+        mode: isImageToImage ? 'i2i' : 't2i', // 明确指定模式：i2i=图生图/in-place edit, t2i=文生图
         width: iframeSize.width,
         height: iframeSize.height,
         negativePrompt: '低质量、模糊、变形、扭曲',
@@ -675,56 +757,18 @@ export const TemplateGenPage: React.FC = () => {
 
       if (result.success && (result.imageUrl || result.imageBase64)) {
         // 更新背景图片
-        // 处理 base64：如果返回的是纯 base64（没有 data:image 前缀），需要添加前缀
-        // 如果 base64 太大（>2MB），使用 Blob URL 避免 431 错误
+        // 1024x1024 的图片 base64 后只有 100-200KB，直接使用 data URL 即可
         let newBackgroundUrl: string;
         if (result.imageUrl) {
           newBackgroundUrl = result.imageUrl;
         } else if (result.imageBase64) {
           // 检查是否已经有 data:image 前缀
           if (result.imageBase64.startsWith('data:image')) {
-            // 如果 base64 太大（>2MB），转换为 Blob URL
-            const base64Data = result.imageBase64.split(',')[1] || result.imageBase64;
-            const sizeInBytes = (base64Data.length * 3) / 4; // base64 大小估算
-            if (sizeInBytes > 2 * 1024 * 1024) { // 2MB
-              // 使用 Blob URL 避免 431 错误
-              try {
-                const byteCharacters = atob(base64Data);
-                const byteNumbers = new Array(byteCharacters.length);
-                for (let i = 0; i < byteCharacters.length; i++) {
-                  byteNumbers[i] = byteCharacters.charCodeAt(i);
-                }
-                const byteArray = new Uint8Array(byteNumbers);
-                const blob = new Blob([byteArray], { type: 'image/png' });
-                newBackgroundUrl = URL.createObjectURL(blob);
-              } catch (error) {
-                console.error('创建 Blob URL 失败，使用 data URL:', error);
-                newBackgroundUrl = result.imageBase64;
-              }
-            } else {
-              newBackgroundUrl = result.imageBase64;
-            }
+            // 直接使用 data URL（1024x1024 图片很小，不需要转换为 Blob URL）
+            newBackgroundUrl = result.imageBase64;
           } else {
             // 纯 base64，添加前缀（默认 PNG 格式）
-            const sizeInBytes = (result.imageBase64.length * 3) / 4;
-            if (sizeInBytes > 2 * 1024 * 1024) { // 2MB
-              // 使用 Blob URL
-              try {
-                const byteCharacters = atob(result.imageBase64);
-                const byteNumbers = new Array(byteCharacters.length);
-                for (let i = 0; i < byteCharacters.length; i++) {
-                  byteNumbers[i] = byteCharacters.charCodeAt(i);
-                }
-                const byteArray = new Uint8Array(byteNumbers);
-                const blob = new Blob([byteArray], { type: 'image/png' });
-                newBackgroundUrl = URL.createObjectURL(blob);
-              } catch (error) {
-                console.error('创建 Blob URL 失败，使用 data URL:', error);
-                newBackgroundUrl = `data:image/png;base64,${result.imageBase64}`;
-              }
-            } else {
-              newBackgroundUrl = `data:image/png;base64,${result.imageBase64}`;
-            }
+            newBackgroundUrl = `data:image/png;base64,${result.imageBase64}`;
           }
         } else {
           setGenerationError('未返回图片数据');
@@ -1592,6 +1636,174 @@ export const TemplateGenPage: React.FC = () => {
               >
                 {isGenerating ? '生成中...' : selectedBackground ? '基于当前背景生成' : '创建新背景'}
               </button>
+              
+              {/* 图片选择区域：显示原始背景图和新生成的图片 */}
+              {(originalBackgroundBeforeGen || backgrounds.length > 0) && (
+                <div className="image-selection-area" style={{ marginTop: '16px' }}>
+                  <div className="image-selection-label" style={{ 
+                    fontSize: '14px', 
+                    fontWeight: 500, 
+                    color: '#374151', 
+                    marginBottom: '8px' 
+                  }}>
+                    选择背景图：
+                  </div>
+                  <div className="image-selection-grid" style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))',
+                    gap: '12px',
+                    maxHeight: '300px',
+                    overflowY: 'auto',
+                    padding: '8px',
+                    background: '#ffffff',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '6px',
+                  }}>
+                    {/* 原始背景图 */}
+                    {originalBackgroundBeforeGen && (
+                      <div
+                        className="image-selection-item"
+                        onClick={() => {
+                          setSelectedBackground(originalBackgroundBeforeGen);
+                          // 如果原始背景图不在背景列表中，添加到列表
+                          if (!backgrounds.includes(originalBackgroundBeforeGen)) {
+                            setBackgrounds(prev => [...prev, originalBackgroundBeforeGen]);
+                          }
+                        }}
+                        style={{
+                          position: 'relative',
+                          cursor: 'pointer',
+                          border: selectedBackground === originalBackgroundBeforeGen ? '2px solid #007bff' : '2px solid #e5e7eb',
+                          borderRadius: '6px',
+                          overflow: 'hidden',
+                          transition: 'all 0.2s',
+                          aspectRatio: '1',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.borderColor = '#007bff';
+                          e.currentTarget.style.transform = 'scale(1.02)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.borderColor = selectedBackground === originalBackgroundBeforeGen ? '#007bff' : '#e5e7eb';
+                          e.currentTarget.style.transform = 'scale(1)';
+                        }}
+                      >
+                        <img
+                          src={originalBackgroundBeforeGen}
+                          alt="原始背景"
+                          style={{
+                            width: '100%',
+                            height: '100%',
+                            objectFit: 'cover',
+                            display: 'block',
+                          }}
+                        />
+                        <div style={{
+                          position: 'absolute',
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          background: 'linear-gradient(to top, rgba(0,0,0,0.6), transparent)',
+                          color: 'white',
+                          fontSize: '11px',
+                          padding: '4px 6px',
+                          fontWeight: 500,
+                        }}>
+                          原始背景
+                        </div>
+                        {selectedBackground === originalBackgroundBeforeGen && (
+                          <div style={{
+                            position: 'absolute',
+                            top: '4px',
+                            right: '4px',
+                            background: '#007bff',
+                            color: 'white',
+                            borderRadius: '50%',
+                            width: '20px',
+                            height: '20px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '12px',
+                            fontWeight: 'bold',
+                          }}>
+                            ✓
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* 新生成的图片 */}
+                    {backgrounds.map((bg, index) => (
+                      <div
+                        key={`generated-${index}`}
+                        className="image-selection-item"
+                        onClick={() => setSelectedBackground(bg)}
+                        style={{
+                          position: 'relative',
+                          cursor: 'pointer',
+                          border: selectedBackground === bg ? '2px solid #007bff' : '2px solid #e5e7eb',
+                          borderRadius: '6px',
+                          overflow: 'hidden',
+                          transition: 'all 0.2s',
+                          aspectRatio: '1',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.borderColor = '#007bff';
+                          e.currentTarget.style.transform = 'scale(1.02)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.borderColor = selectedBackground === bg ? '#007bff' : '#e5e7eb';
+                          e.currentTarget.style.transform = 'scale(1)';
+                        }}
+                      >
+                        <img
+                          src={bg}
+                          alt={`生成的背景 ${index + 1}`}
+                          style={{
+                            width: '100%',
+                            height: '100%',
+                            objectFit: 'cover',
+                            display: 'block',
+                          }}
+                        />
+                        <div style={{
+                          position: 'absolute',
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          background: 'linear-gradient(to top, rgba(0,0,0,0.6), transparent)',
+                          color: 'white',
+                          fontSize: '11px',
+                          padding: '4px 6px',
+                          fontWeight: 500,
+                        }}>
+                          生成 {index + 1}
+                        </div>
+                        {selectedBackground === bg && (
+                          <div style={{
+                            position: 'absolute',
+                            top: '4px',
+                            right: '4px',
+                            background: '#007bff',
+                            color: 'white',
+                            borderRadius: '50%',
+                            width: '20px',
+                            height: '20px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '12px',
+                            fontWeight: 'bold',
+                          }}>
+                            ✓
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

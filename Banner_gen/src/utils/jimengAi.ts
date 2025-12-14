@@ -16,6 +16,7 @@ export interface JimengAiImageGenRequest {
   height?: number;
   style?: string;
   negativePrompt?: string;
+  imageDescription?: string; // 当前图片描述（可选，用于 i2i 模式的 prompt 增强）
 }
 
 export interface JimengAiImageGenResponse {
@@ -168,22 +169,45 @@ export async function generateImageWithJimengAi(
 }
 
 // Prompt enrichment: 根据模板要求增强提示词
+// 对于图生图模式，使用强约束的 in-place edit prompt 格式
 export function enrichPrompt(
   userPrompt: string,
   templateWidth: number,
   templateHeight: number,
   isImageToImage: boolean = false
 ): string {
-  // 基础增强：添加尺寸和质量要求
+  // 如果是图生图（in-place edit），使用强约束版 prompt
+  if (isImageToImage) {
+    // 使用 Brief 提供的结构化 prompt 格式（强约束版）
+    // 注意：图生图模式下不需要"当前图片描述"，因为即梦 AI 已经能看到原图
+    const structuredPrompt = `【任务类型】
+基于上传的原始图片进行"局部编辑（in-place image editing）"，不是重新生成新图片。
+
+【核心约束（非常重要）】
+- 必须严格以当前上传的图片作为唯一基础图像
+- 保持原图的构图、比例、视角、景深、光影、色调与背景虚化完全不变
+- 除明确指定修改的元素外，其余所有区域保持 100% 不变
+- 不得重新构图，不得生成新的主体画面
+
+【编辑方式】
+仅对指定对象进行自然、真实、无痕的替换或增强，使修改后的结果看起来像原图本身拍摄/渲染完成的一部分
+
+【具体修改指令】
+${userPrompt}
+
+【商业要求】
+- 电商橱窗主视觉
+- 画面干净、克制
+- 不生成文字、水印、logo`;
+
+    return structuredPrompt;
+  }
+
+  // 文生图模式：使用原有逻辑
   const sizeInfo = `${templateWidth}x${templateHeight}`;
   
   // 构建增强后的提示词
   let enrichedPrompt = userPrompt;
-
-  // 如果是图生图，添加保持原图风格的提示
-  if (isImageToImage) {
-    enrichedPrompt = `基于原图风格，${enrichedPrompt}`;
-  }
 
   // 添加通用质量要求
   const qualityEnhancements = [
