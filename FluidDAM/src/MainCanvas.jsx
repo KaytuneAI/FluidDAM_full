@@ -3,6 +3,7 @@ import { Tldraw, createTLStore, defaultShapeUtils, getSnapshot, loadSnapshot } f
 import "tldraw/tldraw.css";
 import { getApiBaseUrl } from './utils/apiUtils.js';
 import storageManager from './utils/storageManager.js';
+import { localAssetManager } from '@shared/utils/localAssetManager';
 
 // 导入 sessionBus（使用相对路径指向共享目录）
 function readSessionPayload(key) {
@@ -909,10 +910,53 @@ export default function MainCanvas() {
       console.log('所有素材已成功导入到 SpotStudio');
     };
 
+    // 从本机加载素材
+    const loadLocalAssets = async () => {
+      try {
+        console.log('[SpotStudio] 开始加载本机素材...');
+        console.log('[SpotStudio] 当前 origin:', window.location.origin);
+        if (!localAssetManager) {
+          console.error('[SpotStudio] localAssetManager 未定义');
+          return;
+        }
+        
+        // 先检查素材数量
+        const count = localAssetManager.getAssetCount();
+        console.log(`[SpotStudio] 本机素材数量（元数据）: ${count}`);
+        
+        const assets = await localAssetManager.loadAssets();
+        console.log(`[SpotStudio] 从本机加载了 ${assets.length} 个素材`);
+        console.log('[SpotStudio] 素材详情:', assets.map(a => ({ id: a.id, name: a.name, hasDataUrl: !!a.dataUrl })));
+        
+        if (assets.length > 0) {
+          console.log('[SpotStudio] 开始处理素材，添加到编辑器...');
+          await processAssets({ assets });
+          console.log('[SpotStudio] 素材处理完成');
+        } else {
+          console.log('[SpotStudio] 本机暂无保存的素材');
+          console.log('[SpotStudio] 提示：现在 Banner/Template 和 SpotStudio 都运行在端口 5174，应该可以共享 IndexedDB 数据库了');
+        }
+      } catch (error) {
+        console.error('[SpotStudio] 加载本机素材失败:', error);
+        console.error('[SpotStudio] 错误详情:', error.stack);
+      }
+    };
+
     // 延迟一下，确保编辑器完全初始化（增加到2秒，确保在自动恢复之后执行）
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       console.log('延迟执行导入素材检查...');
-      importAssetsFromLink();
+      try {
+        await importAssetsFromLink();
+      } catch (error) {
+        console.error('[SpotStudio] 从 Link 导入素材时出错:', error);
+      }
+      // Link 导入完成后，加载本机素材
+      console.log('[SpotStudio] 开始加载本机素材...');
+      try {
+        await loadLocalAssets();
+      } catch (error) {
+        console.error('[SpotStudio] 加载本机素材时出错:', error);
+      }
     }, 2000);
 
     return () => clearTimeout(timer);

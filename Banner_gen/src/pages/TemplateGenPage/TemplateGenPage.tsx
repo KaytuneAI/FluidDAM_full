@@ -13,6 +13,7 @@ import {
   SessionBusKeys,
   type LinkToBannerGenPayload,
 } from "@shared/utils/sessionBus";
+import { localAssetManager } from "@shared/utils/localAssetManager";
 import { BannerData } from "../../types";
 import { generateImageWithJimengAi, enrichPrompt } from "../../utils/jimengAi";
 import "./TemplateGenPage.css";
@@ -288,6 +289,92 @@ export const TemplateGenPage: React.FC = () => {
 
     return backgroundUrls;
   }, []);
+
+  // 从模板 HTML 和 CSS 中提取所有图片资源
+  const extractTemplateAssets = useCallback((html: string, css: string): TempAsset[] => {
+    const assets: TempAsset[] = [];
+    const seenUrls = new Set<string>();
+
+    try {
+      // 1. 从 HTML 中提取所有 <img src="..."> 的图片
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      const images = doc.querySelectorAll('img[src]');
+      
+      images.forEach((img, index) => {
+        const src = (img as HTMLImageElement).src || img.getAttribute('src') || '';
+        if (src && !seenUrls.has(src)) {
+          seenUrls.add(src);
+          const fieldName = img.getAttribute('data-field') || `img_${index}`;
+          const fileName = src.split('/').pop()?.split('?')[0] || `image_${index}`;
+          
+          assets.push({
+            id: `template_img_${index}_${Date.now()}`,
+            name: fileName,
+            url: src,
+            dataUrl: src.startsWith('data:') ? src : undefined,
+            source: 'template',
+            fieldName: fieldName,
+          });
+        }
+      });
+
+      // 2. 从 CSS 中提取所有 background-image: url(...) 的图片
+      const cssUrlRegex = /background(?:-image)?\s*:\s*url\(['"]?([^'")]+)['"]?\)/gi;
+      let cssMatch;
+      let cssIndex = 0;
+      
+      while ((cssMatch = cssUrlRegex.exec(css)) !== null) {
+        const url = cssMatch[1].trim();
+        if (url && !seenUrls.has(url)) {
+          // 只处理有效的图片 URL
+          if (url.startsWith('data:image') || url.startsWith('http') || url.match(/\.(png|jpg|jpeg|gif|webp|svg)/i)) {
+            seenUrls.add(url);
+            const fileName = url.split('/').pop()?.split('?')[0] || `css_bg_${cssIndex}`;
+            
+            assets.push({
+              id: `template_css_${cssIndex}_${Date.now()}`,
+              name: fileName,
+              url: url,
+              dataUrl: url.startsWith('data:') ? url : undefined,
+              source: 'template',
+              fieldName: `css_background_${cssIndex}`,
+            });
+            cssIndex++;
+          }
+        }
+      }
+
+      // 3. 从 HTML 中提取所有内联样式中的 background-image
+      const inlineStyleRegex = /style\s*=\s*["'][^"']*background(?:-image)?\s*:\s*url\(['"]?([^'")]+)['"]?\)[^"']*["']/gi;
+      let inlineMatch;
+      let inlineIndex = 0;
+      
+      while ((inlineMatch = inlineStyleRegex.exec(html)) !== null) {
+        const url = inlineMatch[1].trim();
+        if (url && !seenUrls.has(url)) {
+          if (url.startsWith('data:image') || url.startsWith('http') || url.match(/\.(png|jpg|jpeg|gif|webp|svg)/i)) {
+            seenUrls.add(url);
+            const fileName = url.split('/').pop()?.split('?')[0] || `inline_bg_${inlineIndex}`;
+            
+            assets.push({
+              id: `template_inline_${inlineIndex}_${Date.now()}`,
+              name: fileName,
+              url: url,
+              dataUrl: url.startsWith('data:') ? url : undefined,
+              source: 'template',
+              fieldName: `inline_background_${inlineIndex}`,
+            });
+            inlineIndex++;
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('提取模板素材失败:', error);
+    }
+
+    return assets;
+  }, []);
   
   // JSON 数据相关状态（TemplateGen 主要用于编辑模板，数据功能简化）
   const [jsonData, setJsonData] = useState<BannerData[]>([]);
@@ -295,6 +382,10 @@ export const TemplateGenPage: React.FC = () => {
   
   // 来自 Link 的素材
   const [linkedAssets, setLinkedAssets] = useState<TempAsset[]>([]);
+  // 来自模板的素材
+  const [templateAssets, setTemplateAssets] = useState<TempAsset[]>([]);
+  // 来自本机存储的素材
+  const [localAssets, setLocalAssets] = useState<TempAsset[]>([]);
   
   // 素材面板宽度和收起状态
   const [assetSidebarWidth, setAssetSidebarWidth] = useState(280);
@@ -765,10 +856,10 @@ export const TemplateGenPage: React.FC = () => {
           // 检查是否已经有 data:image 前缀
           if (result.imageBase64.startsWith('data:image')) {
             // 直接使用 data URL（1024x1024 图片很小，不需要转换为 Blob URL）
-            newBackgroundUrl = result.imageBase64;
+                newBackgroundUrl = result.imageBase64;
           } else {
             // 纯 base64，添加前缀（默认 PNG 格式）
-            newBackgroundUrl = `data:image/png;base64,${result.imageBase64}`;
+                newBackgroundUrl = `data:image/png;base64,${result.imageBase64}`;
           }
         } else {
           setGenerationError('未返回图片数据');
@@ -795,6 +886,29 @@ export const TemplateGenPage: React.FC = () => {
 
         // 设置为当前选中的背景
         setSelectedBackground(newBackgroundUrl);
+        
+        // 自动保存 AI 生成的图片到本机
+        try {
+          const asset: TempAsset = {
+            id: `ai-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            name: `AI生成_${new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}_${imageGenPrompt.substring(0, 20).replace(/[^\w\u4e00-\u9fa5]/g, '') || '图片'}.png`,
+            dataUrl: newBackgroundUrl,
+            source: 'ai-generated',
+            mimeType: 'image/png',
+            width: iframeSize.width,
+            height: iframeSize.height,
+            prompt: imageGenPrompt,
+            generatedAt: Date.now(),
+            templateSize: `${iframeSize.width}x${iframeSize.height}`,
+          };
+          
+          await localAssetManager.saveAssets([asset]);
+          console.log('[TemplateGen] AI 生成的图片已自动保存到本机');
+        } catch (error) {
+          console.error('[TemplateGen] 保存 AI 生成图片失败:', error);
+          // 不阻塞用户，静默失败
+        }
+        
         setSuccess('背景图生成成功！');
       } else {
         setGenerationError(result.error || '生成失败，请重试');
@@ -835,6 +949,13 @@ export const TemplateGenPage: React.FC = () => {
         const bgImages = extractBackgroundImages(result.html, result.css);
         setBackgrounds(bgImages);
         
+        // 提取模板中的所有图片素材
+        const assets = extractTemplateAssets(result.html, result.css);
+        setTemplateAssets(assets);
+        if (assets.length > 0) {
+          console.log(`[TemplateGen] 从模板中提取了 ${assets.length} 个素材`, assets);
+        }
+        
         // 重置原始模板状态（将在 iframeSize 设置时保存）
         setOriginalHtmlContent("");
         setOriginalCssContent("");
@@ -854,6 +975,13 @@ export const TemplateGenPage: React.FC = () => {
             // 提取背景图片
             const bgImages = extractBackgroundImages(result.html, result.css || "");
             setBackgrounds(bgImages);
+            
+            // 提取模板中的所有图片素材
+            const assets = extractTemplateAssets(result.html, result.css || "");
+            setTemplateAssets(assets);
+            if (assets.length > 0) {
+              console.log(`[TemplateGen] 从模板中提取了 ${assets.length} 个素材`, assets);
+            }
             
             // 重置原始模板状态（将在 iframeSize 设置时保存）
             setOriginalHtmlContent("");
@@ -1634,107 +1762,111 @@ export const TemplateGenPage: React.FC = () => {
                 }}
                 title={!imageGenPrompt.trim() ? '请输入提示词' : selectedBackground ? '基于当前显示的背景图生成新背景' : '纯文生图，创建新背景'}
               >
-                {isGenerating ? '生成中...' : selectedBackground ? '基于当前背景生成' : '创建新背景'}
+                {isGenerating ? '生成中...' : '背景选择'}
               </button>
               
               {/* 图片选择区域：显示原始背景图和新生成的图片 */}
-              {(originalBackgroundBeforeGen || backgrounds.length > 0) && (
-                <div className="image-selection-area" style={{ marginTop: '16px' }}>
-                  <div className="image-selection-label" style={{ 
-                    fontSize: '14px', 
-                    fontWeight: 500, 
-                    color: '#374151', 
-                    marginBottom: '8px' 
-                  }}>
-                    选择背景图：
-                  </div>
-                  <div className="image-selection-grid" style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))',
-                    gap: '12px',
-                    maxHeight: '300px',
-                    overflowY: 'auto',
-                    padding: '8px',
-                    background: '#ffffff',
-                    border: '1px solid #e5e7eb',
-                    borderRadius: '6px',
-                  }}>
-                    {/* 原始背景图 */}
-                    {originalBackgroundBeforeGen && (
-                      <div
-                        className="image-selection-item"
-                        onClick={() => {
-                          setSelectedBackground(originalBackgroundBeforeGen);
-                          // 如果原始背景图不在背景列表中，添加到列表
-                          if (!backgrounds.includes(originalBackgroundBeforeGen)) {
-                            setBackgrounds(prev => [...prev, originalBackgroundBeforeGen]);
-                          }
-                        }}
-                        style={{
-                          position: 'relative',
-                          cursor: 'pointer',
-                          border: selectedBackground === originalBackgroundBeforeGen ? '2px solid #007bff' : '2px solid #e5e7eb',
-                          borderRadius: '6px',
-                          overflow: 'hidden',
-                          transition: 'all 0.2s',
-                          aspectRatio: '1',
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.borderColor = '#007bff';
-                          e.currentTarget.style.transform = 'scale(1.02)';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.borderColor = selectedBackground === originalBackgroundBeforeGen ? '#007bff' : '#e5e7eb';
-                          e.currentTarget.style.transform = 'scale(1)';
-                        }}
-                      >
-                        <img
-                          src={originalBackgroundBeforeGen}
-                          alt="原始背景"
-                          style={{
-                            width: '100%',
-                            height: '100%',
-                            objectFit: 'cover',
-                            display: 'block',
+              {(originalBackgroundBeforeGen || backgrounds.length > 0) && (() => {
+                // 确定模板背景：优先使用 originalBackgroundBeforeGen，否则使用 backgrounds 的第一个
+                const templateBackground = originalBackgroundBeforeGen || (backgrounds.length > 0 ? backgrounds[0] : null);
+                // 过滤掉模板背景，只显示生成的背景
+                const generatedBackgrounds = originalBackgroundBeforeGen 
+                  ? backgrounds.filter(bg => bg !== originalBackgroundBeforeGen)
+                  : backgrounds.slice(1); // 如果没有 originalBackgroundBeforeGen，跳过第一个（它是模板背景）
+                
+                return (
+                  <div className="image-selection-area" style={{ marginTop: '16px' }}>
+                    <div className="image-selection-label" style={{ 
+                      fontSize: '14px', 
+                      fontWeight: 500, 
+                      color: '#374151', 
+                      marginBottom: '8px' 
+                    }}>
+                      选择背景图：
+                    </div>
+                    <div className="image-selection-grid" style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                      gap: '12px',
+                      maxHeight: '300px',
+                      overflowY: 'auto',
+                      padding: '8px',
+                      background: '#ffffff',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '6px',
+                    }}>
+                      {/* 模板背景图 */}
+                      {templateBackground && (
+                        <div
+                          className="image-selection-item"
+                          onClick={() => {
+                            setSelectedBackground(templateBackground);
                           }}
-                        />
-                        <div style={{
-                          position: 'absolute',
-                          bottom: 0,
-                          left: 0,
-                          right: 0,
-                          background: 'linear-gradient(to top, rgba(0,0,0,0.6), transparent)',
-                          color: 'white',
-                          fontSize: '11px',
-                          padding: '4px 6px',
-                          fontWeight: 500,
-                        }}>
-                          原始背景
-                        </div>
-                        {selectedBackground === originalBackgroundBeforeGen && (
+                          style={{
+                            position: 'relative',
+                            cursor: 'pointer',
+                            border: selectedBackground === templateBackground ? '2px solid #007bff' : '2px solid #e5e7eb',
+                            borderRadius: '6px',
+                            overflow: 'hidden',
+                            transition: 'all 0.2s',
+                            aspectRatio: '1',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.borderColor = '#007bff';
+                            e.currentTarget.style.transform = 'scale(1.02)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.borderColor = selectedBackground === templateBackground ? '#007bff' : '#e5e7eb';
+                            e.currentTarget.style.transform = 'scale(1)';
+                          }}
+                        >
+                          <img
+                            src={templateBackground}
+                            alt="模板"
+                            style={{
+                              width: '100%',
+                              height: '100%',
+                              objectFit: 'cover',
+                              display: 'block',
+                            }}
+                          />
                           <div style={{
                             position: 'absolute',
-                            top: '4px',
-                            right: '4px',
-                            background: '#007bff',
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                            background: 'linear-gradient(to top, rgba(0,0,0,0.6), transparent)',
                             color: 'white',
-                            borderRadius: '50%',
-                            width: '20px',
-                            height: '20px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontSize: '12px',
-                            fontWeight: 'bold',
+                            fontSize: '11px',
+                            padding: '4px 6px',
+                            fontWeight: 500,
                           }}>
-                            ✓
+                            模板
                           </div>
-                        )}
-                      </div>
-                    )}
-                    
-                    {/* 新生成的图片 */}
-                    {backgrounds.map((bg, index) => (
+                          {selectedBackground === templateBackground && (
+                            <div style={{
+                              position: 'absolute',
+                              top: '4px',
+                              right: '4px',
+                              background: '#007bff',
+                              color: 'white',
+                              borderRadius: '50%',
+                              width: '20px',
+                              height: '20px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: '12px',
+                              fontWeight: 'bold',
+                            }}>
+                              ✓
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      
+                      {/* 新生成的图片 */}
+                      {generatedBackgrounds.map((bg, index) => (
                       <div
                         key={`generated-${index}`}
                         className="image-selection-item"
@@ -1800,10 +1932,11 @@ export const TemplateGenPage: React.FC = () => {
                           </div>
                         )}
                       </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
           )}
         </div>
@@ -1831,6 +1964,9 @@ export const TemplateGenPage: React.FC = () => {
                   {htmlFileName && <span>模板文件: {htmlFileName}</span>}
                   {cssFileName && <span>CSS 文件: {cssFileName}</span>}
                   {templateFields.length > 0 && <span>可替换字段: {templateFields.length} 个</span>}
+                </p>
+                <p className="template-gen-reload-hint">
+                  点击上方区域可重新加载新模板
                 </p>
               </div>
             )}
@@ -1880,15 +2016,13 @@ export const TemplateGenPage: React.FC = () => {
           {/* 背景选择 */}
           <div className="template-gen-control-section">
             <h3>背景选择</h3>
-            {backgrounds.length > 0 ? (
-              backgrounds.map((bgUrl, index) => (
-                  <div key={index} className="background-single-wrapper">
+            {selectedBackground ? (
+              <div className="background-single-wrapper">
                   <div
-                    className={`background-item-large ${selectedBackground === bgUrl ? 'selected' : ''}`}
+                  className="background-item-large selected"
                     onClick={() => {
-                      setSelectedBackground(bgUrl);
                       // 选中时应用当前调整
-                      applyBackgroundAdjustment(bgUrl, backgroundPosition, backgroundSize);
+                    applyBackgroundAdjustment(selectedBackground, backgroundPosition, backgroundSize);
                     }}
                   >
                     <div 
@@ -1896,15 +2030,13 @@ export const TemplateGenPage: React.FC = () => {
                       className="background-thumb-large"
                       onMouseEnter={(e) => {
                         // 鼠标进入时，阻止父元素的滚动
-                        if (selectedBackground === bgUrl) {
                           e.currentTarget.style.overflow = 'hidden';
-                        }
                       }}
                       onMouseLeave={(e) => {
                         e.currentTarget.style.overflow = '';
                       }}
                       onMouseDown={(e) => {
-                        if (selectedBackground === bgUrl && e.button === 0) {
+                      if (e.button === 0) {
                           e.preventDefault();
                           e.stopPropagation();
                           const startX = e.clientX - backgroundPosition.x;
@@ -1914,7 +2046,7 @@ export const TemplateGenPage: React.FC = () => {
                             const newX = moveEvent.clientX - startX;
                             const newY = moveEvent.clientY - startY;
                             setBackgroundPosition({ x: newX, y: newY });
-                            applyBackgroundAdjustment(bgUrl, { x: newX, y: newY }, backgroundSize);
+                          applyBackgroundAdjustment(selectedBackground, { x: newX, y: newY }, backgroundSize);
                           };
                           
                           const handleMouseUp = () => {
@@ -1929,8 +2061,8 @@ export const TemplateGenPage: React.FC = () => {
                     >
                       <div className="background-thumb-wrapper">
                         <img
-                          src={bgUrl}
-                          alt={`背景 ${index + 1}`}
+                        src={selectedBackground}
+                        alt="当前背景"
                           className="background-thumb-image"
                           style={{
                             transform: `translate(${backgroundPosition.x}px, ${backgroundPosition.y}px) scale(${backgroundSize / 100})`,
@@ -1940,7 +2072,7 @@ export const TemplateGenPage: React.FC = () => {
                             (e.target as HTMLImageElement).style.display = 'none';
                           }}
                         />
-                        {selectedBackground === bgUrl && overlaySize && (
+                      {overlaySize && (
                           <div 
                             className="background-crop-overlay"
                             style={{
@@ -1951,7 +2083,6 @@ export const TemplateGenPage: React.FC = () => {
                         )}
                       </div>
                     </div>
-                    {selectedBackground === bgUrl && (
                       <div className="background-controls" onClick={(e) => e.stopPropagation()}>
                         <div className="background-control-hint">
                           <p>💡 提示：拖拽图片移动，滚轮缩放</p>
@@ -1966,15 +2097,13 @@ export const TemplateGenPage: React.FC = () => {
                             onChange={(e) => {
                               const newSize = parseInt(e.target.value);
                               setBackgroundSize(newSize);
-                              applyBackgroundAdjustment(bgUrl, backgroundPosition, newSize);
+                          applyBackgroundAdjustment(selectedBackground, backgroundPosition, newSize);
                             }}
                           />
                         </div>
                       </div>
-                    )}
                   </div>
                 </div>
-              ))
             ) : (
               <div className="background-empty">
                 <p>暂无背景</p>
@@ -2194,7 +2323,7 @@ export const TemplateGenPage: React.FC = () => {
               <AssetSidebar
                 jsonData={[]}
                 currentIndex={0}
-                extraAssets={linkedAssets}
+                extraAssets={[...templateAssets, ...linkedAssets, ...localAssets]}
                 sidebarWidth={assetSidebarWidth}
                 onAssetClick={(assetUrl, fieldName) => {
                   if (templateFields.some(f => f.name === fieldName)) {

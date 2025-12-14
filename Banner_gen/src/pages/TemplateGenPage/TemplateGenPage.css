@@ -91,15 +91,15 @@
 }
 
 .template-gen-control-section {
-  margin-bottom: 24px;
-  padding: 16px;
+  margin-bottom: 16px;
+  padding: 12px;
   background: #f9fafb;
   border-radius: 8px;
   border: 1px solid #e5e7eb;
 }
 
 .template-gen-control-section h3 {
-  margin: 0 0 12px 0;
+  margin: 0 0 8px 0;
   font-size: 16px;
   font-weight: 600;
   color: #111827;
@@ -118,18 +118,19 @@
 .template-gen-file-input-label {
   display: block;
   width: 100%;
-  padding: 14px 16px;
+  padding: 10px 12px;
   border: 1.5px dashed rgba(0, 0, 0, 0.15);
-  border-radius: 12px;
+  border-radius: 8px;
   background: rgba(0, 0, 0, 0.02);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
   text-align: center;
   transition: all 0.3s ease;
   color: rgba(0, 0, 0, 0.7);
   font-weight: 500;
   position: relative;
   overflow: hidden;
+  min-height: auto;
 }
 
 .template-gen-file-input-label::before {
@@ -160,13 +161,33 @@
 }
 
 .template-gen-info {
-  margin-top: 12px;
-  padding-top: 12px;
+  margin-top: 8px;
+  padding-top: 8px;
   border-top: 1px solid #e5e7eb;
 }
 
 .template-gen-info-text {
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.template-gen-info-text span {
+  display: inline-block;
+}
+
+.template-gen-reload-hint {
+  font-size: 11px;
+  color: rgba(0, 212, 255, 0.7);
+  margin: 6px 0 0 0;
+  padding: 4px 8px;
+  background: rgba(0, 212, 255, 0.05);
+  border-radius: 4px;
+  text-align: center;
+}
   color: #10b981;
   margin: 0;
   line-height: 1.6;
@@ -182,18 +203,18 @@
 /* 模板尺寸选择器 */
 .template-size-selector {
   display: flex;
-  gap: 8px;
-  margin-top: 12px;
+  gap: 6px;
+  margin-top: 8px;
 }
 
 .size-option-btn {
   flex: 1;
-  padding: 10px 16px;
+  padding: 6px 10px;
   border: 1.5px solid rgba(0, 0, 0, 0.15);
-  border-radius: 8px;
+  border-radius: 6px;
   background: rgba(0, 0, 0, 0.02);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   color: rgba(0, 0, 0, 0.7);
   transition: all 0.3s ease;
@@ -214,16 +235,16 @@
 }
 
 .custom-size-input-wrapper {
-  margin-top: 12px;
+  margin-top: 8px;
 }
 
 .custom-size-input {
   width: 100%;
-  padding: 10px 12px;
+  padding: 6px 10px;
   border: 1.5px solid rgba(0, 0, 0, 0.15);
-  border-radius: 8px;
+  border-radius: 6px;
   background: #fff;
-  font-size: 13px;
+  font-size: 12px;
   color: rgba(0, 0, 0, 0.7);
   transition: all 0.3s ease;
 }
@@ -239,13 +260,13 @@
 }
 
 .current-template-size {
-  margin-top: 12px;
-  padding-top: 12px;
+  margin-top: 8px;
+  padding-top: 8px;
   border-top: 1px solid #e5e7eb;
 }
 
 .current-template-size span {
-  font-size: 12px;
+  font-size: 11px;
   color: #10b981;
   font-weight: 500;
 }
@@ -903,10 +924,16 @@
 .template-gen-asset-sidebar-wrapper {
   width: 280px;
   flex-shrink: 0;
+  height: calc(100vh - 120px);
+  display: flex;
+  flex-direction: column;
 }
 
 .template-gen-asset-sidebar {
   height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 /* 文生图功能区域样式 */

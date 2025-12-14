@@ -7,6 +7,7 @@ import {
   type LinkToBannerGenPayload,
   type LinkToSpotPayload,
 } from '@shared/utils/sessionBus';
+import { localAssetManager } from '@shared/utils/localAssetManager';
 import { getBannerGenUrl, getFluidDAMUrl } from '../../utils/navigation';
 import { getApiBaseUrl } from '../../utils/apiUtils';
 
@@ -25,7 +26,11 @@ export const LinkPage: React.FC = () => {
   const [selectedIndex, setSelectedIndex] = useState<number>(-1);
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
   const [selectedFolder, setSelectedFolder] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'linkdam' | 'local'>('linkdam');
+  const [activeTab, setActiveTab] = useState<'linkdam' | 'local' | 'local-storage'>('linkdam');
+  const [localAssetCount, setLocalAssetCount] = useState<number>(0);
+  const [localAssets, setLocalAssets] = useState<TempAsset[]>([]);
+  const [selectedLocalAssetIds, setSelectedLocalAssetIds] = useState<Set<string>>(new Set());
+  const [previewedLocalAssetId, setPreviewedLocalAssetId] = useState<string | null>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const imagesRef = useRef<ImageFile[]>([]);
 
@@ -200,53 +205,6 @@ export const LinkPage: React.FC = () => {
     });
   };
 
-
-  // 导入BannerGen（原导入SpotStudio功能已转移）
-  const handleImportToBannerGen = async () => {
-    if (selectedIndices.size === 0) {
-      alert('请先选择要导入的素材');
-      return;
-    }
-
-    const selectedImages = Array.from(selectedIndices).map(i => images[i]);
-
-    const assets: TempAsset[] = await Promise.all(
-      selectedImages.map(async (img, index) => {
-        let dataUrl = img.dataUrl;
-        if (!dataUrl) {
-          dataUrl = await fileToDataUrl(img.file);
-          // 缓存到 images 中
-          setImages(prev => {
-            const updated = [...prev];
-            const imgIndex = updated.findIndex(i => i.file === img.file);
-            if (imgIndex >= 0) {
-              updated[imgIndex] = { ...updated[imgIndex], dataUrl };
-            }
-            return updated;
-          });
-        }
-
-        return {
-          id: `${Date.now()}-${index}`,
-          name: img.name,
-          dataUrl,
-          source: 'local-upload' as const,
-          mimeType: img.type,
-        };
-      })
-    );
-
-    const payload: LinkToBannerGenPayload = {
-      from: 'link',
-      createdAt: Date.now(),
-      assets,
-    };
-
-    writeSessionPayload(SessionBusKeys.LINK_TO_BANNERGEN, payload);
-
-    const baseUrl = getBannerGenUrl();
-    window.location.href = `${baseUrl}/banner-batch`;
-  };
 
   // 导入SpotStudio
   const handleImportToSpotStudio = async () => {
@@ -445,12 +403,150 @@ export const LinkPage: React.FC = () => {
     }, 100);
   };
 
+  // 保存选中素材到本机
+  const handleSaveToLocal = async () => {
+    if (selectedIndices.size === 0) {
+      alert('请先选择要保存到本机的素材');
+      return;
+    }
+
+    const selectedImages = Array.from(selectedIndices).map(i => images[i]);
+
+    try {
+      const assets: TempAsset[] = await Promise.all(
+        selectedImages.map(async (img, index) => {
+          let dataUrl = img.dataUrl;
+          if (!dataUrl) {
+            dataUrl = await fileToDataUrl(img.file);
+            // 缓存到 images 中
+            setImages(prev => {
+              const updated = [...prev];
+              const imgIndex = updated.findIndex(i => i.file === img.file);
+              if (imgIndex >= 0) {
+                updated[imgIndex] = { ...updated[imgIndex], dataUrl };
+              }
+              return updated;
+            });
+          }
+
+          return {
+            id: `local-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`,
+            name: img.name,
+            dataUrl,
+            source: 'local-upload' as const,
+            mimeType: img.type,
+          };
+        })
+      );
+
+      const savedCount = await localAssetManager.saveAssets(assets);
+      alert(`成功保存 ${savedCount} 个素材到本机！`);
+      
+      // 更新本机素材数量
+      setLocalAssetCount(localAssetManager.getAssetCount());
+      
+      // 清空选择
+      setSelectedIndices(new Set());
+    } catch (error) {
+      console.error('保存到本机失败:', error);
+      alert('保存失败，请重试');
+    }
+  };
+
   // 当有图片但没有选中时，自动选中第一张
   useEffect(() => {
     if (activeTab === 'local' && images.length > 0 && selectedIndex === -1) {
       setSelectedIndex(0);
     }
   }, [activeTab, images.length, selectedIndex]);
+
+  // 加载本机素材数量和列表
+  useEffect(() => {
+    const updateLocalAssets = async () => {
+      try {
+        const assets = await localAssetManager.loadAssets();
+        setLocalAssets(assets);
+        setLocalAssetCount(assets.length);
+      } catch (error) {
+        console.error('加载本机素材失败:', error);
+      }
+    };
+    updateLocalAssets();
+    // 定期更新（每5秒）
+    const interval = setInterval(updateLocalAssets, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // 当切换到本机素材标签页时，重新加载
+  useEffect(() => {
+    if (activeTab === 'local-storage') {
+      const loadLocalAssets = async () => {
+        try {
+          const assets = await localAssetManager.loadAssets();
+          setLocalAssets(assets);
+          setLocalAssetCount(assets.length);
+        } catch (error) {
+          console.error('加载本机素材失败:', error);
+        }
+      };
+      loadLocalAssets();
+    }
+  }, [activeTab]);
+
+  // 删除选中的本机素材
+  const handleDeleteLocalAssets = async () => {
+    if (selectedLocalAssetIds.size === 0) {
+      alert('请先选择要删除的素材');
+      return;
+    }
+
+    if (!confirm(`确定要删除选中的 ${selectedLocalAssetIds.size} 个素材吗？`)) {
+      return;
+    }
+
+    try {
+      let deletedCount = 0;
+      for (const id of selectedLocalAssetIds) {
+        const success = await localAssetManager.deleteAsset(id);
+        if (success) deletedCount++;
+      }
+
+      alert(`成功删除 ${deletedCount} 个素材`);
+      
+      // 重新加载本机素材
+      const assets = await localAssetManager.loadAssets();
+      setLocalAssets(assets);
+      setLocalAssetCount(assets.length);
+      
+      // 清空选择
+      setSelectedLocalAssetIds(new Set());
+    } catch (error) {
+      console.error('删除本机素材失败:', error);
+      alert('删除失败，请重试');
+    }
+  };
+
+  // 切换本机素材的选择状态
+  const handleToggleLocalAssetSelection = (id: string) => {
+    setSelectedLocalAssetIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+  };
+
+  // 全选/取消全选本机素材
+  const handleSelectAllLocalAssets = () => {
+    if (selectedLocalAssetIds.size === localAssets.length) {
+      setSelectedLocalAssetIds(new Set());
+    } else {
+      setSelectedLocalAssetIds(new Set(localAssets.map(a => a.id)));
+    }
+  };
 
   return (
     <div className="link-page">
@@ -459,13 +555,36 @@ export const LinkPage: React.FC = () => {
         {activeTab === 'local' && images.length > 0 && (
           <div className="folder-selector">
             <span className="image-count">📁 {selectedFolder} - 共 {images.length} 张图片</span>
+            {localAssetCount > 0 && (
+              <span className="local-asset-count" style={{ marginLeft: '16px', color: '#10b981', fontSize: '14px' }}>
+                💾 本机已保存 {localAssetCount} 个素材
+              </span>
+            )}
           </div>
         )}
       </div>
 
       <div className="link-page-content">
-        {/* 左侧：两个大按钮 */}
+        {/* 左侧：三个大按钮 */}
         <div className="link-page-left">
+          <button
+            type="button"
+            className={`category-btn ${activeTab === 'local-storage' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveTab('local-storage');
+              setSelectedIndex(-1);
+              setSelectedIndices(new Set());
+            }}
+          >
+            本机素材 {localAssetCount > 0 && `(${localAssetCount})`}
+          </button>
+          <button
+            type="button"
+            className={`category-btn ${activeTab === 'local' ? 'active' : ''}`}
+            onClick={handleLocalMaterialClick}
+          >
+            本地素材
+          </button>
           <button
             type="button"
             className={`category-btn ${activeTab === 'linkdam' ? 'active' : ''}`}
@@ -476,13 +595,6 @@ export const LinkPage: React.FC = () => {
             }}
           >
             外部 Link
-          </button>
-          <button
-            type="button"
-            className={`category-btn ${activeTab === 'local' ? 'active' : ''}`}
-            onClick={handleLocalMaterialClick}
-          >
-            本地素材
           </button>
         </div>
 
@@ -499,7 +611,103 @@ export const LinkPage: React.FC = () => {
 
           {/* 素材列表视图 */}
           <div className="material-list-view">
-            {activeTab === 'local' ? (
+            {activeTab === 'local-storage' ? (
+              localAssets.length === 0 ? (
+                <div className="empty-state">
+                  <div className="select-folder-prompt">
+                    <div className="select-folder-icon">💾</div>
+                    <div className="select-folder-text">本机暂无保存的素材</div>
+                    <div className="hint" style={{ marginTop: '8px', fontSize: '12px', color: '#999' }}>
+                      在"本地素材"标签页选择素材后，点击"导入到本机"按钮保存
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="material-grid">
+                    {localAssets.map((asset) => (
+                      <div
+                        key={asset.id}
+                        className={`material-item ${selectedLocalAssetIds.has(asset.id) ? 'multi-selected' : ''} ${previewedLocalAssetId === asset.id ? 'previewed' : ''}`}
+                        onClick={() => setPreviewedLocalAssetId(asset.id)}
+                      >
+                        <div className="material-thumbnail">
+                          <img 
+                            src={asset.dataUrl || asset.url || ''} 
+                            alt={asset.name}
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="#f0f0f0"/><text x="50" y="50" text-anchor="middle" fill="#999">加载失败</text></svg>';
+                            }}
+                          />
+                          <div 
+                            className={`material-checkbox ${selectedLocalAssetIds.has(asset.id) ? 'checked' : ''}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleToggleLocalAssetSelection(asset.id);
+                            }}
+                            title={selectedLocalAssetIds.has(asset.id) ? '取消选择' : '选择'}
+                          >
+                            {selectedLocalAssetIds.has(asset.id) ? '✕' : ''}
+                          </div>
+                          {asset.source === 'ai-generated' && (
+                            <div style={{
+                              position: 'absolute',
+                              top: '4px',
+                              left: '4px',
+                              background: 'rgba(0, 212, 255, 0.9)',
+                              color: 'white',
+                              fontSize: '10px',
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              fontWeight: 500,
+                            }}>
+                              AI
+                            </div>
+                          )}
+                        </div>
+                        <div className="material-label" title={asset.name}>
+                          {asset.name}
+                        </div>
+                        {asset.prompt && (
+                          <div style={{
+                            fontSize: '11px',
+                            color: '#999',
+                            marginTop: '4px',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }} title={asset.prompt}>
+                            {asset.prompt.substring(0, 20)}...
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="material-actions">
+                    <button 
+                      className="btn-select-all"
+                      onClick={handleSelectAllLocalAssets}
+                    >
+                      {selectedLocalAssetIds.size === localAssets.length ? '取消全选' : '全选'}
+                    </button>
+                    <button 
+                      className="btn-deselect-all"
+                      onClick={() => setSelectedLocalAssetIds(new Set())}
+                      disabled={selectedLocalAssetIds.size === 0}
+                    >
+                      取消选择
+                    </button>
+                    <button 
+                      className="btn-delete"
+                      onClick={handleDeleteLocalAssets}
+                      disabled={selectedLocalAssetIds.size === 0}
+                    >
+                      从本机删除 {selectedLocalAssetIds.size > 0 && `(${selectedLocalAssetIds.size})`}
+                    </button>
+                  </div>
+                </>
+              )
+            ) : activeTab === 'local' ? (
               images.length === 0 ? (
                 <div className="empty-state">
                   <div className="select-folder-prompt">
@@ -553,18 +761,11 @@ export const LinkPage: React.FC = () => {
                       取消选择
                     </button>
                     <button 
-                      className="btn-import-bannergen"
-                      onClick={handleImportToBannerGen}
+                      className="btn-save-to-local"
+                      onClick={handleSaveToLocal}
                       disabled={selectedIndices.size === 0}
                     >
-                      导入BannerGen {selectedIndices.size > 0 && `(${selectedIndices.size})`}
-                    </button>
-                    <button 
-                      className="btn-import-spotstudio"
-                      onClick={handleImportToSpotStudio}
-                      disabled={selectedIndices.size === 0}
-                    >
-                      导入SpotStudio {selectedIndices.size > 0 && `(${selectedIndices.size})`}
+                      导入到本机 {selectedIndices.size > 0 && `(${selectedIndices.size})`}
                     </button>
                   </div>
                 </>
@@ -579,7 +780,65 @@ export const LinkPage: React.FC = () => {
 
           {/* 详细视图：大图 + meta信息 + 导航 */}
           <div className="detail-view">
-            {selectedIndex >= 0 && selectedImage ? (
+            {activeTab === 'local-storage' && (previewedLocalAssetId || selectedLocalAssetIds.size > 0) ? (
+              // 本机素材标签页：优先显示预览的素材，否则显示第一个选中的素材
+              (() => {
+                const assetIdToShow = previewedLocalAssetId || Array.from(selectedLocalAssetIds)[0];
+                const selectedAsset = localAssets.find(a => a.id === assetIdToShow);
+                return selectedAsset ? (
+                  <>
+                    <div className="detail-image-container">
+                      <img 
+                        src={selectedAsset.dataUrl || selectedAsset.url || ''} 
+                        alt={selectedAsset.name}
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="#f0f0f0"/><text x="50" y="50" text-anchor="middle" fill="#999">加载失败</text></svg>';
+                        }}
+                      />
+                    </div>
+                    <div className="detail-meta-section">
+                      <div className="detail-meta-content">
+                        <h3>详细 meta 信息</h3>
+                        <div className="details-list">
+                          <div className="detail-item">
+                            <span className="detail-label">文件名：</span>
+                            <span className="detail-value">{selectedAsset.name}</span>
+                          </div>
+                          {selectedAsset.mimeType && (
+                            <div className="detail-item">
+                              <span className="detail-label">文件类型：</span>
+                              <span className="detail-value">{selectedAsset.mimeType}</span>
+                            </div>
+                          )}
+                          {selectedAsset.width && selectedAsset.height && (
+                            <div className="detail-item">
+                              <span className="detail-label">尺寸：</span>
+                              <span className="detail-value">{selectedAsset.width} × {selectedAsset.height} 像素</span>
+                            </div>
+                          )}
+                          {selectedAsset.source === 'ai-generated' && selectedAsset.prompt && (
+                            <div className="detail-item">
+                              <span className="detail-label">提示词：</span>
+                              <span className="detail-value" title={selectedAsset.prompt}>{selectedAsset.prompt}</span>
+                            </div>
+                          )}
+                          {selectedAsset.generatedAt && (
+                            <div className="detail-item">
+                              <span className="detail-label">生成时间：</span>
+                              <span className="detail-value">{formatDate(selectedAsset.generatedAt)}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="empty-preview">
+                    <p>请从左侧选择一张图片</p>
+                  </div>
+                );
+              })()
+            ) : activeTab === 'local' && selectedIndex >= 0 && selectedImage ? (
               <>
                 <div className="detail-image-container">
                   <div 

@@ -84,7 +84,7 @@ export const ResizableSidebar: React.FC<ResizableSidebarProps> = ({
         )}
       </div>
       
-      {/* 收起/展开按钮 */}
+      {/* 收起/展开按钮 - 与 BannerGen 样式一致：右侧中间位置，边框颜色 #e5e7eb */}
       {onToggleCollapse && (
         <div
           style={{
@@ -98,6 +98,7 @@ export const ResizableSidebar: React.FC<ResizableSidebarProps> = ({
             cursor: 'pointer',
             transition: 'background 0.2s',
             position: 'relative',
+            flexShrink: 0,
           }}
           onClick={onToggleCollapse}
           onMouseEnter={(e) => {
@@ -114,7 +115,7 @@ export const ResizableSidebar: React.FC<ResizableSidebarProps> = ({
               height: 0,
               borderStyle: 'solid',
               borderWidth: '6px 0 6px 8px',
-              borderColor: `transparent transparent transparent #6c757d`,
+              borderColor: 'transparent transparent transparent #6c757d',
               transform: collapsed ? 'rotate(180deg)' : 'rotate(0deg)',
               transition: 'transform 0.2s ease-in-out',
             }}

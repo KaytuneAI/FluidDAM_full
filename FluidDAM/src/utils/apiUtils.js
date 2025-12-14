@@ -23,10 +23,11 @@ export function getApiBaseUrl() {
       return '/api'; // 使用相对路径，会被 vite proxy 转发到 3001
     }
     
-    // 如果直接访问 FluidDAM 前端（端口 5173），使用 3001 端口
-    if (port === '5173') {
+    // 如果直接访问 Banner_gen/FluidDAM 前端（端口 5174），使用 3001 端口
+    // Note: FluidDAM now runs on port 5174 via /spotstudio path, sharing the same server as Banner_gen
+    if (port === '5174' || port === '5173') {
       const apiUrl = 'http://localhost:3001';
-      console.log('[FluidDAM getApiBaseUrl] 直接访问前端（端口 5173），返回:', apiUrl);
+      console.log('[FluidDAM getApiBaseUrl] 直接访问前端（端口 ' + port + '），返回:', apiUrl);
       return apiUrl;
     }
     

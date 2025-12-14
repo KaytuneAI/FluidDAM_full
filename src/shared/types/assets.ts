@@ -1,6 +1,6 @@
 // 统一的素材资产类型，兼容本地文件和外部 DAM URL
 
-export type AssetSource = 'local-upload' | 'external-url' | 'dam-api';
+export type AssetSource = 'local-upload' | 'external-url' | 'dam-api' | 'ai-generated';
 
 export type TempAsset = {
   id: string;          // 唯一 ID（可以是 uuid 或 `${Date.now()}-${index}`）
@@ -17,6 +17,11 @@ export type TempAsset = {
   mimeType?: string;
   width?: number;
   height?: number;
+
+  // AI 生成相关字段
+  prompt?: string;        // 生成时使用的提示词
+  generatedAt?: number;   // 生成时间戳
+  templateSize?: string;  // 模板尺寸（如 "800x800"）
 };
 
 

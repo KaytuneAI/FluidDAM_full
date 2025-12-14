@@ -172,7 +172,7 @@
 
 .material-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 16px;
   padding: 8px;
   padding-bottom: 100px; /* 为底部悬浮按钮留出空间，避免内容被遮挡 */
@@ -187,6 +187,7 @@
   cursor: pointer;
   transition: all 0.2s ease;
   background: white;
+  height: 200px; /* 固定高度，确保所有素材项大小一致 */
 }
 
 .material-item:hover {
@@ -208,7 +209,7 @@
 
 .material-thumbnail {
   width: 100%;
-  min-height: 120px;
+  height: 160px; /* 固定高度，确保所有缩略图大小一致 */
   padding: 12px;
   overflow: hidden;
   background: #f9f9f9;
@@ -216,6 +217,7 @@
   align-items: center;
   justify-content: center;
   position: relative;
+  flex-shrink: 0; /* 防止被压缩 */
 }
 
 .material-thumbnail img {
@@ -223,7 +225,7 @@
   max-height: 100%;
   width: auto;
   height: auto;
-  object-fit: contain;
+  object-fit: contain; /* 保持宽高比 */
 }
 
 .material-label {
@@ -293,6 +295,7 @@
 
 .btn-select-all,
 .btn-deselect-all,
+.btn-delete,
 .btn-import-bannergen {
   flex: 1;
   padding: 12px 20px;
@@ -360,14 +363,14 @@
 }
 
 .btn-deselect-all {
-  background: #fff3cd;
-  color: #856404;
-  border: 1px solid #ffc107;
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #7dd3fc;
 }
 
 .btn-deselect-all:hover:not(:disabled) {
-  background: #ffe69c;
-  border-color: #ffb300;
+  background: #bae6fd;
+  border-color: #38bdf8;
 }
 
 .btn-deselect-all:disabled {
@@ -376,6 +379,71 @@
   background: #f5f5f5;
   border-color: #e0e0e0;
   color: #999;
+}
+
+.btn-delete {
+  background: #fee2e2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+}
+
+.btn-delete:hover:not(:disabled) {
+  background: #fecaca;
+  border-color: #fca5a5;
+  color: #b91c1c;
+}
+
+.btn-delete:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: #f5f5f5;
+  border-color: #e0e0e0;
+  color: #999;
+}
+
+.btn-save-to-local {
+  flex: 1;
+  padding: 12px 20px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', 'SF Pro Display', sans-serif;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 50%, #1d4ed8 100%);
+  color: white;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-save-to-local::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+  transition: left 0.5s;
+}
+
+.btn-save-to-local:hover:not(:disabled)::before {
+  left: 100%;
+}
+
+.btn-save-to-local:hover:not(:disabled) {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 50%, #1e40af 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.5);
+}
+
+.btn-save-to-local:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: #ccc;
+  box-shadow: none;
 }
 
 .empty-state {

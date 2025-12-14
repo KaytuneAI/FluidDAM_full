@@ -19,95 +19,26 @@ export const FloatingMenu: React.FC<FloatingMenuProps> = ({
   title,
   logoUrl
 }) => {
-  const [isVisible, setIsVisible] = useState(false);
+  // 固定菜单：始终显示，不再使用悬浮逻辑
   const menuRef = useRef<HTMLDivElement>(null);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 控制页面内容下移
+  // 控制页面内容下移（固定菜单，始终下移）
   useEffect(() => {
-    const menuHeight = 80; // 菜单高度（56px min-height + 24px padding）
-    if (isVisible) {
+    const menuHeight = 40; // 菜单高度缩小到一半（原来80px，现在40px）
       document.body.style.paddingTop = `${menuHeight}px`;
-      document.body.style.transition = 'padding-top 0.3s cubic-bezier(0.4, 0, 0.2, 1)';
-    } else {
-      document.body.style.paddingTop = '0';
-    }
+    // 移除过渡动画，让界面立即呈现，无下滑动效
+    document.body.style.transition = 'none';
 
     return () => {
       document.body.style.paddingTop = '0';
+      document.body.style.transition = '';
     };
-  }, [isVisible]);
-
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      const y = e.clientY;
-      
-      // 清除之前的定时器
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-        timeoutRef.current = null;
-      }
-
-      // 鼠标接近顶部区域时显示菜单
-      if (y <= triggerHeight) {
-        setIsVisible(true);
-      } else {
-        // 鼠标移开时，延迟隐藏（给用户时间移动到菜单上）
-        timeoutRef.current = setTimeout(() => {
-          // 检查鼠标是否在菜单区域内
-          if (menuRef.current) {
-            const rect = menuRef.current.getBoundingClientRect();
-            const mouseX = e.clientX;
-            const mouseY = e.clientY;
-            
-            // 如果鼠标不在菜单区域内，才隐藏
-            if (
-              mouseX < rect.left ||
-              mouseX > rect.right ||
-              mouseY < rect.top ||
-              mouseY > rect.bottom
-            ) {
-              setIsVisible(false);
-            }
-          } else {
-            setIsVisible(false);
-          }
-        }, 200); // 200ms 延迟，避免快速移动时闪烁
-      }
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-        timeoutRef.current = null;
-      }
-    };
-  }, [triggerHeight]);
+  }, []);
 
   return (
     <div 
       ref={menuRef}
-      className={`floating-menu ${isVisible ? 'visible' : ''}`}
-      onMouseEnter={() => {
-        // 鼠标进入菜单区域时，清除隐藏定时器
-        if (timeoutRef.current) {
-          clearTimeout(timeoutRef.current);
-          timeoutRef.current = null;
-        }
-        setIsVisible(true);
-      }}
-      onMouseLeave={() => {
-        // 鼠标离开菜单区域时，延迟隐藏
-        if (timeoutRef.current) {
-          clearTimeout(timeoutRef.current);
-        }
-        timeoutRef.current = setTimeout(() => {
-          setIsVisible(false);
-        }, 500);
-      }}
+      className="floating-menu fixed"
     >
       <div className="floating-menu-content">
         <div className="floating-menu-buttons">

@@ -22,6 +22,7 @@ import {
   SessionBusKeys,
   type LinkToBannerGenPayload,
 } from "@shared/utils/sessionBus";
+import { localAssetManager } from "@shared/utils/localAssetManager";
 import {
   saveBannerGenData,
   loadBannerGenData,
@@ -69,6 +70,8 @@ export const BannerBatchPage: React.FC = () => {
   
   // 来自 Link 的素材
   const [linkedAssets, setLinkedAssets] = useState<TempAsset[]>([]);
+  // 来自本机存储的素材
+  const [localAssets, setLocalAssets] = useState<TempAsset[]>([]);
   
   // 素材面板宽度和收起状态
   const [assetSidebarWidth, setAssetSidebarWidth] = useState(280);
@@ -177,6 +180,22 @@ export const BannerBatchPage: React.FC = () => {
         setSuccess(`已从 Link 导入 ${payload.assets.length} 个素材`);
       }
     }
+  }, []);
+
+  // 初始化时从本机加载素材
+  useEffect(() => {
+    const loadLocalAssets = async () => {
+      try {
+        const assets = await localAssetManager.loadAssets();
+        setLocalAssets(assets);
+        if (assets.length > 0) {
+          console.log(`[BannerGen] 从本机加载了 ${assets.length} 个素材`);
+        }
+      } catch (error) {
+        console.error('[BannerGen] 加载本机素材失败:', error);
+      }
+    };
+    loadLocalAssets();
   }, []);
 
   // 将模板 CSS 中的 @font-face 规则注入到顶层文档，确保 html-to-image 能识别字体
@@ -2867,7 +2886,7 @@ export const BannerBatchPage: React.FC = () => {
               <AssetSidebar
                 jsonData={jsonData}
                 currentIndex={currentIndex}
-                extraAssets={linkedAssets}
+                extraAssets={[...linkedAssets, ...localAssets]}
                 sidebarWidth={assetSidebarWidth}
                 onAssetClick={(assetUrl, fieldName) => {
                   // 点击素材时，可以高亮对应的字段

@@ -22,8 +22,11 @@ export function getBannerGenUrl() {
     return '/bannergen';
   }
   
-  // Development mode: use direct port
-  return import.meta.env.VITE_BANNER_GEN_URL || 'http://localhost:5174';
+  // Development mode: use current origin (dynamic port detection)
+  if (import.meta.env.VITE_BANNER_GEN_URL) {
+    return import.meta.env.VITE_BANNER_GEN_URL;
+  }
+  return window.location.origin;
 }
 
 /**
@@ -34,8 +37,12 @@ export function getFluidDAMUrl() {
     return '/spotstudio';
   }
   
-  // Development mode: use direct port
-  return import.meta.env.VITE_FLUIDDAM_URL || 'http://localhost:5173';
+  // Development mode: use current origin with /spotstudio path
+  // This allows both apps to share the same IndexedDB database
+  if (import.meta.env.VITE_FLUIDDAM_URL) {
+    return import.meta.env.VITE_FLUIDDAM_URL;
+  }
+  return `${window.location.origin}/spotstudio`;
 }
 
 /**
@@ -46,9 +53,11 @@ export function getLinkUrl() {
     return '/link';
   }
   
-  // Development mode: use direct port
-  const baseUrl = import.meta.env.VITE_BANNER_GEN_URL || 'http://localhost:5174';
-  return `${baseUrl}/link`;
+  // Development mode: use current origin
+  if (import.meta.env.VITE_BANNER_GEN_URL) {
+    return `${import.meta.env.VITE_BANNER_GEN_URL}/link`;
+  }
+  return `${window.location.origin}/link`;
 }
 
 /**
@@ -59,8 +68,16 @@ export function getHomeUrl() {
     return '/';
   }
   
-  // Development mode: use direct port
-  return import.meta.env.VITE_HOME_URL || 'http://localhost:3000';
+  // Development mode: use environment variable or default to port 3000
+  if (import.meta.env.VITE_HOME_URL) {
+    return import.meta.env.VITE_HOME_URL;
+  }
+  // Default to port 3000 for unified entry, but allow dynamic detection if needed
+  const currentPort = window.location.port;
+  if (currentPort && currentPort !== '5174' && currentPort !== '5173') {
+    return window.location.origin;
+  }
+  return 'http://localhost:3000';
 }
 
 /**
@@ -99,9 +116,11 @@ export function getTemplateGenUrl() {
     return '/bannergen/template-gen';
   }
   
-  // Development mode: use direct port
-  const baseUrl = import.meta.env.VITE_BANNER_GEN_URL || 'http://localhost:5174';
-  return `${baseUrl}/template-gen`;
+  // Development mode: use current origin
+  if (import.meta.env.VITE_BANNER_GEN_URL) {
+    return `${import.meta.env.VITE_BANNER_GEN_URL}/template-gen`;
+  }
+  return `${window.location.origin}/template-gen`;
 }
 
 /**

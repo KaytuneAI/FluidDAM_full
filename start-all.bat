@@ -36,15 +36,15 @@ start "Unified API Server" cmd /k "cd /d %~dp0FluidDAM && npm run server"
 
 timeout /t 2 /nobreak >nul
 
-echo Starting Banner_gen Application (Port 5174)...
+echo Starting Banner_gen Application (Port 5174 - includes SpotStudio)...
 cd /d "%~dp0Banner_gen"
-start "Banner_gen" cmd /k "cd /d %~dp0Banner_gen && npm run dev"
+start "Banner_gen + SpotStudio" cmd /k "cd /d %~dp0Banner_gen && npm run dev"
 
 timeout /t 2 /nobreak >nul
 
-echo Starting FluidDAM Application (Port 5173)...
-cd /d "%~dp0FluidDAM"
-start "FluidDAM" cmd /k "cd /d %~dp0FluidDAM && npm run dev"
+REM Note: SpotStudio is now served through Banner_gen on port 5174
+REM Access SpotStudio at: http://localhost:5174/spotstudio
+REM Access Banner_gen at: http://localhost:5174
 
 timeout /t 2 /nobreak >nul
 
@@ -66,7 +66,7 @@ echo   - API: http://localhost:3000/api
 echo.
 echo Standalone Access (for development/debugging):
 echo   - Banner_gen: http://localhost:5174
-echo   - FluidDAM: http://localhost:5173
+echo   - SpotStudio: http://localhost:5174/spotstudio (merged with Banner_gen for shared IndexedDB)
 echo   - Unified API: http://localhost:3001 (FluidDAM + Banner_gen + Jimeng AI proxy)
 echo.
 echo Tip: Recommended to use unified entry - only one port to remember!
