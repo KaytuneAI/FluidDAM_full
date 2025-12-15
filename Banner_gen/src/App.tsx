@@ -1,10 +1,18 @@
+import React from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { BannerBatchPage } from "./pages/BannerBatchPage";
 import { LinkPage } from "./pages/LinkPage";
 import { TemplateGenPage } from "./pages/TemplateGenPage";
 import { FloatingMenu } from "./components/FloatingMenu";
-import { navigateToLink, navigateToFluidDAM, navigateToHome, navigateToTemplateGen } from "./utils/navigation";
+import { navigateToLink, navigateToFluidDAM, navigateToHome, navigateToTemplateGen, getFluidDAMUrl } from "./utils/navigation";
 import "./App.css";
+
+// 辅助函数：检查是否在生产模式
+function isProductionMode(): boolean {
+  return import.meta.env.MODE === 'production' || 
+         import.meta.env.PROD ||
+         (window.location.port === '' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1');
+}
 
 function AppContent() {
   const location = useLocation();
@@ -25,8 +33,29 @@ function AppContent() {
     window.location.href = `${basename}/banner-batch`;
   };
 
-  const handleNavigateToSpotStudio = () => {
-    navigateToFluidDAM();
+  const handleNavigateToSpotStudio = (e?: React.MouseEvent) => {
+    // 阻止事件冒泡，避免触发其他处理
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    
+    // SpotStudio 是另一个应用，运行在独立的端口 5174
+    // 开发模式：直接跳转到 http://localhost:5174
+    // 生产模式：跳转到 /spotstudio（由 nginx 处理）
+    const isProd = import.meta.env.MODE === 'production' || 
+                   import.meta.env.PROD ||
+                   (window.location.port === '' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1');
+    
+    const spotStudioUrl = isProd 
+      ? '/spotstudio' 
+      : 'http://localhost:5174';
+    
+    console.log('[BannerGen] handleNavigateToSpotStudio: 跳转到', spotStudioUrl);
+    console.log('[BannerGen] handleNavigateToSpotStudio: 生产模式?', isProd);
+    
+    // 立即跳转
+    window.location.href = spotStudioUrl;
   };
 
   const handleNavigateToHome = () => {
@@ -84,6 +113,12 @@ function AppContent() {
         <Route path="/banner-batch" element={<BannerBatchPage />} />
         <Route path="/link" element={<LinkPage />} />
         <Route path="/template-gen" element={<TemplateGenPage />} />
+        {/* 
+          注意：/spotstudio 路径不应该在这里定义路由
+          因为 vite 插件 (spotstudio-html-plugin) 应该在中间件层面处理 /spotstudio 路径
+          返回 FluidDAM 的 HTML，所以 React Router 不应该匹配到这个路径
+          如果 React Router 匹配到了 /spotstudio，说明 vite 插件没有正常工作
+        */}
       </Routes>
     </>
   );

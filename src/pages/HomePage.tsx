@@ -91,7 +91,7 @@ export default function HomePage() {
               if (isProduction) {
                 target.src = '/bannergen/image/kaytuneai logo.png';
               } else {
-                const fallbackUrl = import.meta.env.VITE_BANNER_GEN_URL || 'http://localhost:5174';
+                const fallbackUrl = import.meta.env.VITE_BANNER_GEN_URL || 'http://localhost:5173';
                 target.src = `${fallbackUrl}/image/kaytuneai logo.png`;
               }
             }}

@@ -200,6 +200,71 @@
   display: block;
 }
 
+/* 模板尺寸折叠容器 */
+.template-size-collapsible {
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.template-size-collapsible-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: rgba(0, 212, 255, 0.03);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.2s ease;
+}
+
+.template-size-collapsible-header:hover {
+  background: rgba(0, 212, 255, 0.06);
+}
+
+.template-size-collapsible-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.8);
+}
+
+.collapse-icon {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.5);
+  transition: transform 0.3s ease;
+}
+
+.template-size-collapsible-content {
+  max-height: 2000px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.3s ease, padding 0.3s ease;
+  padding: 16px;
+}
+
+.template-size-collapsible-content.collapsed {
+  max-height: 0;
+  opacity: 0;
+  padding: 0 16px;
+}
+
+.template-size-inner-section {
+  margin-bottom: 20px;
+}
+
+.template-size-inner-section:last-child {
+  margin-bottom: 0;
+}
+
+.template-size-inner-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.7);
+}
+
 /* 模板尺寸选择器 */
 .template-size-selector {
   display: flex;

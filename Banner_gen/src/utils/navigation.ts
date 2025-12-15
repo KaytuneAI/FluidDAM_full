@@ -37,12 +37,14 @@ export function getFluidDAMUrl(): string {
     return '/spotstudio';
   }
   
-  // Development mode: use current origin with /spotstudio path
-  // This allows both apps to share the same IndexedDB database
+  // Development mode: FluidDAM 运行在独立的端口 5174
+  // 如果配置了环境变量，使用环境变量
   if (import.meta.env.VITE_FLUIDDAM_URL) {
     return import.meta.env.VITE_FLUIDDAM_URL;
   }
-  return `${window.location.origin}/spotstudio`;
+  
+  // 开发模式：直接返回 http://localhost:5174
+  return 'http://localhost:5174';
 }
 
 /**

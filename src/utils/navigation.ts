@@ -22,8 +22,8 @@ export function getBannerGenUrl(): string {
     return '/bannergen';
   }
   
-  // Development mode: use direct port
-  return import.meta.env.VITE_BANNER_GEN_URL || 'http://localhost:5174';
+  // Development mode: Banner_gen runs on port 5173
+  return import.meta.env.VITE_BANNER_GEN_URL || 'http://localhost:5173';
 }
 
 /**
@@ -34,8 +34,8 @@ export function getFluidDAMUrl(): string {
     return '/spotstudio';
   }
   
-  // Development mode: use direct port
-  return import.meta.env.VITE_FLUIDDAM_URL || 'http://localhost:5173';
+  // Development mode: FluidDAM (SpotStudio) runs on port 5174
+  return import.meta.env.VITE_FLUIDDAM_URL || 'http://localhost:5174';
 }
 
 /**
@@ -46,8 +46,8 @@ export function getLinkUrl(): string {
     return '/link';
   }
   
-  // Development mode: use direct port
-  const baseUrl = import.meta.env.VITE_BANNER_GEN_URL || 'http://localhost:5174';
+  // Development mode: Link page is part of Banner_gen (port 5173)
+  const baseUrl = import.meta.env.VITE_BANNER_GEN_URL || 'http://localhost:5173';
   return `${baseUrl}/link`;
 }
 
@@ -99,8 +99,8 @@ export function getTemplateGenUrl(): string {
     return '/bannergen/template-gen';
   }
   
-  // Development mode: use direct port
-  const baseUrl = import.meta.env.VITE_BANNER_GEN_URL || 'http://localhost:5174';
+  // Development mode: TemplateGen page is part of Banner_gen (port 5173)
+  const baseUrl = import.meta.env.VITE_BANNER_GEN_URL || 'http://localhost:5173';
   return `${baseUrl}/template-gen`;
 }
 

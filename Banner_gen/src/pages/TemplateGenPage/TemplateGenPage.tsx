@@ -49,6 +49,9 @@ export const TemplateGenPage: React.FC = () => {
   const [generationError, setGenerationError] = useState<string>(""); // 生成错误信息
   const [originalBackgroundBeforeGen, setOriginalBackgroundBeforeGen] = useState<string | null>(null); // 生成前的原始背景图
   
+  // 折叠状态
+  const [isTemplateSizeCollapsed, setIsTemplateSizeCollapsed] = useState<boolean>(false); // 模板尺寸区域是否折叠
+  
   // 原始模板状态（用于尺寸切换时恢复）
   const [originalHtmlContent, setOriginalHtmlContent] = useState<string>("");
   const [originalCssContent, setOriginalCssContent] = useState<string>("");
@@ -386,6 +389,22 @@ export const TemplateGenPage: React.FC = () => {
   const [templateAssets, setTemplateAssets] = useState<TempAsset[]>([]);
   // 来自本机存储的素材
   const [localAssets, setLocalAssets] = useState<TempAsset[]>([]);
+  
+  // 初始化时从本机加载素材
+  useEffect(() => {
+    const loadLocalAssets = async () => {
+      try {
+        const assets = await localAssetManager.loadAssets();
+        setLocalAssets(assets);
+        if (assets.length > 0) {
+          console.log(`[TemplateGen] 从本机加载了 ${assets.length} 个素材`);
+        }
+      } catch (error) {
+        console.error('[TemplateGen] 加载本机素材失败:', error);
+      }
+    };
+    loadLocalAssets();
+  }, []); // 只在组件挂载时执行一次
   
   // 素材面板宽度和收起状态
   const [assetSidebarWidth, setAssetSidebarWidth] = useState(280);
@@ -904,6 +923,9 @@ export const TemplateGenPage: React.FC = () => {
           
           await localAssetManager.saveAssets([asset]);
           console.log('[TemplateGen] AI 生成的图片已自动保存到本机');
+          
+          // 更新本地素材列表，让新保存的素材立即显示在素材面板中
+          setLocalAssets(prev => [...prev, asset]);
         } catch (error) {
           console.error('[TemplateGen] 保存 AI 生成图片失败:', error);
           // 不阻塞用户，静默失败
@@ -1972,144 +1994,157 @@ export const TemplateGenPage: React.FC = () => {
             )}
           </div>
 
-          {/* 模板尺寸 */}
-          <div className="template-gen-control-section">
-            <h3>模板尺寸</h3>
-            <div className="template-size-selector">
-              <button
-                className={`size-option-btn ${templateSize === '800x800' ? 'active' : ''}`}
-                onClick={() => handleSizeChange('800x800')}
-              >
-                800×800
-              </button>
-              <button
-                className={`size-option-btn ${templateSize === '750x1000' ? 'active' : ''}`}
-                onClick={() => handleSizeChange('750x1000')}
-              >
-                750×1000
-              </button>
-              <button
-                className={`size-option-btn ${templateSize === 'custom' ? 'active' : ''}`}
-                onClick={() => handleSizeChange('custom')}
-              >
-                自定义
-              </button>
+          {/* 模板尺寸（可折叠，包含模板尺寸、背景选择和缩放控制） */}
+          <div className="template-gen-control-section template-size-collapsible">
+            <div 
+              className="template-size-collapsible-header"
+              onClick={() => setIsTemplateSizeCollapsed(!isTemplateSizeCollapsed)}
+            >
+              <h3>模板尺寸</h3>
+              <span className="collapse-icon">
+                {isTemplateSizeCollapsed ? '▼' : '▲'}
+              </span>
             </div>
-            {templateSize === 'custom' && (
-              <div className="custom-size-input-wrapper">
-                <input
-                  type="text"
-                  className="custom-size-input"
-                  value={customSize}
-                  onChange={(e) => handleCustomSizeChange(e.target.value)}
-                  placeholder="例如: 800x800 或 800*800"
-                />
-              </div>
-            )}
-            {htmlContent && iframeSize && (
-              <div className="current-template-size">
-                <span>当前模板尺寸：{iframeSize.width}×{iframeSize.height}</span>
-              </div>
-            )}
-          </div>
-
-          {/* 背景选择 */}
-          <div className="template-gen-control-section">
-            <h3>背景选择</h3>
-            {selectedBackground ? (
-              <div className="background-single-wrapper">
-                  <div
-                  className="background-item-large selected"
-                    onClick={() => {
-                      // 选中时应用当前调整
-                    applyBackgroundAdjustment(selectedBackground, backgroundPosition, backgroundSize);
-                    }}
+            <div className={`template-size-collapsible-content ${isTemplateSizeCollapsed ? 'collapsed' : ''}`}>
+              {/* 模板尺寸选择 */}
+              <div className="template-size-inner-section">
+                <div className="template-size-selector">
+                  <button
+                    className={`size-option-btn ${templateSize === '800x800' ? 'active' : ''}`}
+                    onClick={() => handleSizeChange('800x800')}
                   >
-                    <div 
-                      ref={backgroundThumbRef}
-                      className="background-thumb-large"
-                      onMouseEnter={(e) => {
-                        // 鼠标进入时，阻止父元素的滚动
-                          e.currentTarget.style.overflow = 'hidden';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.overflow = '';
-                      }}
-                      onMouseDown={(e) => {
-                      if (e.button === 0) {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const startX = e.clientX - backgroundPosition.x;
-                          const startY = e.clientY - backgroundPosition.y;
-                          
-                          const handleMouseMove = (moveEvent: MouseEvent) => {
-                            const newX = moveEvent.clientX - startX;
-                            const newY = moveEvent.clientY - startY;
-                            setBackgroundPosition({ x: newX, y: newY });
-                          applyBackgroundAdjustment(selectedBackground, { x: newX, y: newY }, backgroundSize);
-                          };
-                          
-                          const handleMouseUp = () => {
-                            document.removeEventListener('mousemove', handleMouseMove);
-                            document.removeEventListener('mouseup', handleMouseUp);
-                          };
-                          
-                          document.addEventListener('mousemove', handleMouseMove);
-                          document.addEventListener('mouseup', handleMouseUp);
-                        }
-                      }}
-                    >
-                      <div className="background-thumb-wrapper">
-                        <img
-                        src={selectedBackground}
-                        alt="当前背景"
-                          className="background-thumb-image"
-                          style={{
-                            transform: `translate(${backgroundPosition.x}px, ${backgroundPosition.y}px) scale(${backgroundSize / 100})`,
-                            transformOrigin: 'center center',
+                    800×800
+                  </button>
+                  <button
+                    className={`size-option-btn ${templateSize === '750x1000' ? 'active' : ''}`}
+                    onClick={() => handleSizeChange('750x1000')}
+                  >
+                    750×1000
+                  </button>
+                  <button
+                    className={`size-option-btn ${templateSize === 'custom' ? 'active' : ''}`}
+                    onClick={() => handleSizeChange('custom')}
+                  >
+                    自定义
+                  </button>
+                </div>
+                {templateSize === 'custom' && (
+                  <div className="custom-size-input-wrapper">
+                    <input
+                      type="text"
+                      className="custom-size-input"
+                      value={customSize}
+                      onChange={(e) => handleCustomSizeChange(e.target.value)}
+                      placeholder="例如: 800x800 或 800*800"
+                    />
+                  </div>
+                )}
+                {htmlContent && iframeSize && (
+                  <div className="current-template-size">
+                    <span>当前模板尺寸：{iframeSize.width}×{iframeSize.height}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* 背景选择 */}
+              <div className="template-size-inner-section">
+                <h4>背景选择</h4>
+                {selectedBackground ? (
+                  <div className="background-single-wrapper">
+                      <div
+                      className="background-item-large selected"
+                        onClick={() => {
+                          // 选中时应用当前调整
+                        applyBackgroundAdjustment(selectedBackground, backgroundPosition, backgroundSize);
+                        }}
+                      >
+                        <div 
+                          ref={backgroundThumbRef}
+                          className="background-thumb-large"
+                          onMouseEnter={(e) => {
+                            // 鼠标进入时，阻止父元素的滚动
+                              e.currentTarget.style.overflow = 'hidden';
                           }}
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).style.display = 'none';
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.overflow = '';
                           }}
-                        />
-                      {overlaySize && (
-                          <div 
-                            className="background-crop-overlay"
-                            style={{
-                              width: `${overlaySize.width}px`,
-                              height: `${overlaySize.height}px`,
-                            }}
-                          />
-                        )}
+                          onMouseDown={(e) => {
+                          if (e.button === 0) {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const startX = e.clientX - backgroundPosition.x;
+                              const startY = e.clientY - backgroundPosition.y;
+                              
+                              const handleMouseMove = (moveEvent: MouseEvent) => {
+                                const newX = moveEvent.clientX - startX;
+                                const newY = moveEvent.clientY - startY;
+                                setBackgroundPosition({ x: newX, y: newY });
+                            applyBackgroundAdjustment(selectedBackground, { x: newX, y: newY }, backgroundSize);
+                              };
+                              
+                              const handleMouseUp = () => {
+                                document.removeEventListener('mousemove', handleMouseMove);
+                                document.removeEventListener('mouseup', handleMouseUp);
+                              };
+                              
+                              document.addEventListener('mousemove', handleMouseMove);
+                              document.addEventListener('mouseup', handleMouseUp);
+                            }
+                          }}
+                        >
+                          <div className="background-thumb-wrapper">
+                            <img
+                            src={selectedBackground}
+                            alt="当前背景"
+                              className="background-thumb-image"
+                              style={{
+                                transform: `translate(${backgroundPosition.x}px, ${backgroundPosition.y}px) scale(${backgroundSize / 100})`,
+                                transformOrigin: 'center center',
+                              }}
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).style.display = 'none';
+                              }}
+                            />
+                          {overlaySize && (
+                              <div 
+                                className="background-crop-overlay"
+                                style={{
+                                  width: `${overlaySize.width}px`,
+                                  height: `${overlaySize.height}px`,
+                                }}
+                              />
+                            )}
+                          </div>
+                        </div>
+                          <div className="background-controls" onClick={(e) => e.stopPropagation()}>
+                            <div className="background-control-hint">
+                              <p>💡 提示：拖拽图片移动，滚轮缩放</p>
+                            </div>
+                            <div className="background-control-row">
+                              <label>缩放: {backgroundSize}%</label>
+                              <input
+                                type="range"
+                                min="50"
+                                max="200"
+                                value={backgroundSize}
+                                onChange={(e) => {
+                                  const newSize = parseInt(e.target.value);
+                                  setBackgroundSize(newSize);
+                            applyBackgroundAdjustment(selectedBackground, backgroundPosition, newSize);
+                                }}
+                              />
+                            </div>
+                          </div>
                       </div>
                     </div>
-                      <div className="background-controls" onClick={(e) => e.stopPropagation()}>
-                        <div className="background-control-hint">
-                          <p>💡 提示：拖拽图片移动，滚轮缩放</p>
-                        </div>
-                        <div className="background-control-row">
-                          <label>缩放: {backgroundSize}%</label>
-                          <input
-                            type="range"
-                            min="50"
-                            max="200"
-                            value={backgroundSize}
-                            onChange={(e) => {
-                              const newSize = parseInt(e.target.value);
-                              setBackgroundSize(newSize);
-                          applyBackgroundAdjustment(selectedBackground, backgroundPosition, newSize);
-                            }}
-                          />
-                        </div>
-                      </div>
+                ) : (
+                  <div className="background-empty">
+                    <p>暂无背景</p>
+                    <p className="background-hint">可以从素材栏拖拽图片到背景区域</p>
                   </div>
-                </div>
-            ) : (
-              <div className="background-empty">
-                <p>暂无背景</p>
-                <p className="background-hint">可以从素材栏拖拽图片到背景区域</p>
+                )}
               </div>
-            )}
+            </div>
           </div>
 
           {/* 可替换字段列表 */}

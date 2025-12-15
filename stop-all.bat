@@ -17,14 +17,14 @@ for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3001" ^| findstr "LISTENING
     taskkill /F /PID %%a >nul 2>&1
 )
 
-echo Finding and stopping process on port 5174 (Banner_gen)...
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5174" ^| findstr "LISTENING"') do (
+echo Finding and stopping process on port 5173 (Banner_gen)...
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5173" ^| findstr "LISTENING"') do (
     echo Stopping process PID: %%a
     taskkill /F /PID %%a >nul 2>&1
 )
 
-echo Finding and stopping process on port 5173 (FluidDAM)...
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5173" ^| findstr "LISTENING"') do (
+echo Finding and stopping process on port 5174 (FluidDAM / SpotStudio)...
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5174" ^| findstr "LISTENING"') do (
     echo Stopping process PID: %%a
     taskkill /F /PID %%a >nul 2>&1
 )
