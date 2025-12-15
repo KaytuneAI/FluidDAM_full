@@ -23,6 +23,15 @@ export const TemplateGenPage: React.FC = () => {
   const [cssContent, setCssContent] = useState<string>("");
   const [htmlFileName, setHtmlFileName] = useState<string>("");
   const [cssFileName, setCssFileName] = useState<string>("");
+  
+  // 保存原始 ZIP 文件结构信息（用于保存时重建相同结构）
+  const [originalZipStructure, setOriginalZipStructure] = useState<{
+    htmlPath: string; // 原始 HTML 文件路径（包含目录）
+    cssPaths: string[]; // 原始 CSS 文件路径列表
+    htmlDir: string; // HTML 文件所在目录（用于计算相对路径）
+    imagePathMap: Map<string, string>; // dataUrl -> 原始图片路径的映射
+    fontPathMap: Map<string, string>; // dataUrl -> 原始字体路径的映射
+  } | null>(null);
   const [error, setError] = useState<string>("");
   const [success, setSuccess] = useState<string>("");
   const [iframeSize, setIframeSize] = useState<{ width: number; height: number } | null>(null);
@@ -963,6 +972,88 @@ export const TemplateGenPage: React.FC = () => {
         setHtmlFileName(result.htmlFileName || file.name);
         setCssFileName(result.cssFileName || "");
         setTemplateFields(result.fields);
+        
+        // 解析 ZIP 文件以获取原始路径映射（dataUrl -> 原始路径）
+        const zip = await JSZip.loadAsync(file);
+        const imagePathMap = new Map<string, string>(); // dataUrl -> 原始路径
+        const fontPathMap = new Map<string, string>(); // dataUrl -> 原始路径
+        const cssPaths: string[] = [];
+        let htmlPath = result.htmlFileName || 'index.html';
+        let htmlDir = '';
+        
+        // 获取 HTML 目录
+        const htmlFiles: JSZip.JSZipObject[] = [];
+        zip.forEach((relativePath, entry) => {
+          if (entry.dir) return;
+          const lower = relativePath.toLowerCase();
+          if (lower.endsWith('.html') || lower.endsWith('.htm')) {
+            htmlFiles.push(entry);
+          }
+        });
+        const mainHtmlEntry = htmlFiles.find(f => f.name.toLowerCase().includes('index')) || htmlFiles[0];
+        if (mainHtmlEntry) {
+          htmlPath = mainHtmlEntry.name;
+          htmlDir = mainHtmlEntry.name.split('/').slice(0, -1).join('/');
+        }
+        
+        // 处理所有文件，建立 dataUrl 到原始路径的映射
+        for (const [relativePath, entry] of Object.entries(zip.files)) {
+          if (entry.dir) continue;
+          const lower = relativePath.toLowerCase();
+          
+          if (lower.endsWith('.css')) {
+            cssPaths.push(entry.name);
+          } else if (
+            lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg') ||
+            lower.endsWith('.gif') || lower.endsWith('.webp') || lower.endsWith('.svg')
+          ) {
+            // 图片文件：读取并创建 dataUrl，建立映射
+            try {
+              const ext = entry.name.toLowerCase().split('.').pop() || 'png';
+              let mime = 'image/png';
+              if (ext === 'jpg' || ext === 'jpeg') mime = 'image/jpeg';
+              else if (ext === 'gif') mime = 'image/gif';
+              else if (ext === 'webp') mime = 'image/webp';
+              else if (ext === 'svg') mime = 'image/svg+xml';
+              
+              const base64 = await entry.async('base64');
+              const dataUrl = `data:${mime};base64,${base64}`;
+              imagePathMap.set(dataUrl, entry.name);
+            } catch (e) {
+              console.warn(`无法处理图片文件 ${entry.name}:`, e);
+            }
+          } else if (
+            lower.endsWith('.ttf') || lower.endsWith('.otf') || lower.endsWith('.woff') ||
+            lower.endsWith('.woff2') || lower.endsWith('.eot')
+          ) {
+            // 字体文件：读取并创建 dataUrl，建立映射
+            try {
+              const ext = entry.name.toLowerCase().split('.').pop() || 'ttf';
+              let mime = 'font/ttf';
+              if (ext === 'otf') mime = 'font/opentype';
+              else if (ext === 'woff') mime = 'font/woff';
+              else if (ext === 'woff2') mime = 'font/woff2';
+              else if (ext === 'eot') mime = 'application/vnd.ms-fontobject';
+              
+              const base64 = await entry.async('base64');
+              const dataUrl = `data:${mime};base64,${base64}`;
+              fontPathMap.set(dataUrl, entry.name);
+            } catch (e) {
+              console.warn(`无法处理字体文件 ${entry.name}:`, e);
+            }
+          }
+        }
+        
+        const finalCssPaths = cssPaths.length > 0 ? cssPaths : 
+          (result.cssFileName ? result.cssFileName.split(', ').map(name => name.trim()) : ['style.css']);
+        
+        setOriginalZipStructure({
+          htmlPath,
+          cssPaths: finalCssPaths,
+          htmlDir,
+          imagePathMap,
+          fontPathMap,
+        });
         // TemplateGen 不需要 JSON 数据，只关注模板结构
         // iframeSize will be adjusted automatically after iframe loads via adjustIframeSize
         setSuccess(`模板加载成功！包含 ${result.fields.length} 个可替换字段`);
@@ -993,6 +1084,15 @@ export const TemplateGenPage: React.FC = () => {
             setCssFileName("");
             setTemplateFields(result.fields);
             setSuccess(`HTML 模板加载成功！包含 ${result.fields.length} 个可替换字段`);
+            
+            // HTML 文件上传时，没有 ZIP 结构，使用默认结构
+            setOriginalZipStructure({
+              htmlPath: file.name,
+              cssPaths: ['style.css'], // 默认 CSS 文件名
+              htmlDir: '',
+              imagePathMap: new Map(), // HTML 文件上传时没有原始路径映射
+              fontPathMap: new Map(), // HTML 文件上传时没有原始路径映射
+            });
             
             // 提取背景图片
             const bgImages = extractBackgroundImages(result.html, result.css || "");
@@ -1508,41 +1608,31 @@ export const TemplateGenPage: React.FC = () => {
         return fileName;
       };
 
-      // 从所有 img 元素提取图片并记录替换映射
+      // 从所有 img 元素提取图片并记录替换映射（使用原始路径）
       const imageReplacements = new Map<string, string>();
       const images = iframeDoc.querySelectorAll('img');
       images.forEach((img) => {
         const src = img.getAttribute('src') || '';
         if (src.startsWith('data:')) {
-          const fileName = extractImageFromDataUrl(src, `image`);
-          if (fileName) {
-            imageReplacements.set(src, `image/${fileName}`);
+          // 查找原始路径
+          const originalPath = originalZipStructure?.imagePathMap.get(src);
+          if (originalPath) {
+            imageReplacements.set(src, originalPath);
+          } else {
+            // 如果是新添加的图片（不在原始 ZIP 中），使用默认路径
+            const fileName = extractImageFromDataUrl(src, `image`);
+            if (fileName) {
+              const defaultPath = htmlDirForStructure 
+                ? `${htmlDirForStructure}/image/${fileName}`
+                : `image/${fileName}`;
+              imageReplacements.set(src, defaultPath);
+            }
           }
         }
       });
 
-      // 从 CSS 中提取字体和图片 URL（data URL）
-      const cssUrlRegex = /url\(["']?(data:[^"')]+)["']?\)/gi;
-      const cssMatches: Array<{ url: string; replacement: string; fullMatch: string }> = [];
-      let cssMatch;
-      while ((cssMatch = cssUrlRegex.exec(extractedCss)) !== null) {
-        const fullMatch = cssMatch[0]; // 完整的 url(...) 匹配
-        const url = cssMatch[1]; // data URL
-        const fileName = extractImageFromDataUrl(url, 'resource');
-        if (fileName) {
-          cssMatches.push({ 
-            url: url, 
-            replacement: `image/${fileName}`, 
-            fullMatch: fullMatch 
-          });
-        }
-      }
-      // 替换所有匹配的 URL（需要替换完整的 url(...) 部分）
-      cssMatches.forEach(({ url, replacement, fullMatch }) => {
-        // 替换完整的 url(...) 为新的路径
-        const newUrl = fullMatch.replace(url, replacement);
-        extractedCss = extractedCss.replace(fullMatch, newUrl);
-      });
+      // 从 CSS 中提取图片 URL（data URL），字体文件会在后面单独处理
+      // 这里先不替换，等收集完所有文件后再统一替换为原始路径
       
       // 从背景样式中提取图片（如果还没有处理）
       const container = iframeDoc.querySelector('.container') as HTMLElement;
@@ -1554,15 +1644,11 @@ export const TemplateGenPage: React.FC = () => {
           if (bgUrlMatch) {
             const dataUrl = bgUrlMatch[1];
             if (!imageReplacements.has(dataUrl)) {
-              const fileName = extractImageFromDataUrl(dataUrl, 'background');
-              if (fileName) {
-                imageReplacements.set(dataUrl, `image/${fileName}`);
-                // 更新 CSS 中的背景图片
-                const escapedUrl = dataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                extractedCss = extractedCss.replace(
-                  new RegExp(escapedUrl, 'g'),
-                  `image/${fileName}`
-                );
+              // 背景图片已经在 imageDataMap 中处理了，这里不需要额外处理
+              // 只需要确保它被添加到 imageReplacements 以便在 HTML 中替换
+              const originalPath = originalZipStructure?.imagePathMap.get(dataUrl);
+              if (originalPath) {
+                imageReplacements.set(dataUrl, originalPath);
               }
             }
           }
@@ -1575,103 +1661,343 @@ export const TemplateGenPage: React.FC = () => {
       finalBodyHtml = finalBodyHtml.replace(/class="[^"]*field-highlight[^"]*"/g, '');
       finalBodyHtml = finalBodyHtml.replace(/field-highlight/g, '');
       
-      // 替换所有图片的 data URL 为相对路径
-      imageReplacements.forEach((newPath, oldDataUrl) => {
+      // 5. 创建目录结构并添加文件（使用原始 ZIP 结构）
+      // 确定 HTML 文件路径
+      const finalHtmlPath = originalZipStructure?.htmlPath || htmlFileName || 'index.html';
+      
+      // 确定 CSS 文件路径（如果有多个，合并为一个，使用第一个文件名）
+      const finalCssPath = originalZipStructure?.cssPaths?.[0] || 'style.css';
+      
+      // 确定 HTML 文件所在目录（用于计算 CSS 相对路径）
+      const htmlDirForStructure = originalZipStructure?.htmlDir || 
+        (finalHtmlPath.includes('/') ? finalHtmlPath.split('/').slice(0, -1).join('/') : '');
+      
+      // 替换所有图片的 data URL 为原始路径（相对于 HTML 文件）
+      imageReplacements.forEach((originalPath, oldDataUrl) => {
+        // 计算图片路径相对于 HTML 文件的路径
+        const htmlDirForImages = htmlDirForStructure || '';
+        const imageDir = originalPath.includes('/') 
+          ? originalPath.split('/').slice(0, -1).join('/')
+          : '';
+        const imageFileName = originalPath.split('/').pop() || originalPath;
+        
+        let imageRelativePath = originalPath;
+        if (htmlDirForImages && imageDir) {
+          // 计算相对路径
+          if (htmlDirForImages === imageDir) {
+            // HTML 和图片在同一目录
+            imageRelativePath = imageFileName;
+          } else {
+            // 需要计算相对路径（简化处理，使用原始路径）
+            imageRelativePath = originalPath;
+          }
+        } else if (!htmlDirForImages && imageDir) {
+          // HTML 在根目录，图片在子目录
+          imageRelativePath = originalPath;
+        } else if (htmlDirForImages && !imageDir) {
+          // HTML 在子目录，图片在根目录
+          const upLevels = htmlDirForImages.split('/').length;
+          imageRelativePath = '../'.repeat(upLevels) + imageFileName;
+        }
+        
         // 转义特殊字符用于正则替换
         const escapedUrl = oldDataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        finalBodyHtml = finalBodyHtml.replace(new RegExp(escapedUrl, 'g'), newPath);
+        finalBodyHtml = finalBodyHtml.replace(new RegExp(escapedUrl, 'g'), imageRelativePath);
       });
-
-      // 5. 创建目录结构并添加文件
-      // HTML 文件
-      const finalHtmlFileName = htmlFileName || 'index.html';
+      
+      // 更新 CSS 中的图片路径为原始路径（相对于 CSS 文件）
+      // 重新遍历 CSS 中的所有 dataUrl，更新为对应的原始路径
+      const cssDataUrlRegex2 = /url\(["']?(data:[^"')]+)["']?\)/gi;
+      let cssDataUrlMatch2;
+      const cssDirForImages = finalCssPath.includes('/') 
+        ? finalCssPath.split('/').slice(0, -1).join('/')
+        : '';
+      
+      while ((cssDataUrlMatch2 = cssDataUrlRegex2.exec(extractedCss)) !== null) {
+        const fullMatch = cssDataUrlMatch2[0];
+        const dataUrl = cssDataUrlMatch2[1];
+        const isFont = dataUrl.includes('font') || dataUrl.includes('woff') || 
+                      dataUrl.includes('otf') || dataUrl.includes('ttf') || dataUrl.includes('eot');
+        
+        if (!isFont) {
+          // 图片：查找对应的原始路径
+          let originalPath = originalZipStructure?.imagePathMap.get(dataUrl);
+          if (!originalPath) {
+            // 新添加的图片，从 imageDataMap 中查找
+            for (const [path, resource] of imageDataMap.entries()) {
+              // 通过比较 dataUrl 来确定（需要重新构建 dataUrl）
+              // 简化：直接使用 imageDataMap 中的路径
+            }
+            // 如果找不到，跳过（可能是其他类型的资源）
+            continue;
+          }
+          
+          // 计算图片路径相对于 CSS 文件的路径
+          const imageDir = originalPath.includes('/') 
+            ? originalPath.split('/').slice(0, -1).join('/')
+            : '';
+          const imageFileName = originalPath.split('/').pop() || originalPath;
+          
+          let imageRelativePath = originalPath;
+          if (cssDirForImages && imageDir) {
+            if (cssDirForImages === imageDir) {
+              imageRelativePath = imageFileName;
+            }
+          } else if (cssDirForImages && !imageDir) {
+            const upLevels = cssDirForImages.split('/').length;
+            imageRelativePath = '../'.repeat(upLevels) + imageFileName;
+          }
+          
+          // 更新 CSS 中的图片路径
+          const escapedUrl = dataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          extractedCss = extractedCss.replace(
+            new RegExp(escapedUrl, 'g'),
+            imageRelativePath
+          );
+        }
+      }
+      
+      // 计算 CSS 相对于 HTML 的路径
+      let cssRelativePath = finalCssPath;
+      if (htmlDirForStructure && !finalCssPath.startsWith('/')) {
+        // 如果 HTML 在子目录中，CSS 路径需要相对于 HTML 目录
+        if (finalCssPath.includes('/')) {
+          // CSS 也在子目录中，需要计算相对路径
+          const cssDirForPath = finalCssPath.split('/').slice(0, -1).join('/');
+          if (cssDirForPath === htmlDirForStructure) {
+            // 在同一目录，只需要文件名
+            cssRelativePath = finalCssPath.split('/').pop() || finalCssPath;
+          } else {
+            // 在不同目录，使用相对路径
+            cssRelativePath = finalCssPath;
+          }
+        } else {
+          // CSS 在根目录，HTML 在子目录，需要 ../ 回到根目录
+          cssRelativePath = '../' + finalCssPath;
+        }
+      }
+      
+      // 创建 HTML 文件
       const finalHtml = `<!DOCTYPE html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="${cssRelativePath}" />
   </head>
   <body>
     ${finalBodyHtml}
   </body>
 </html>`;
-      zip.file(finalHtmlFileName, finalHtml);
+      zip.file(finalHtmlPath, finalHtml);
 
-      // CSS 文件
+      // CSS 文件（使用原始路径）
       const finalCss = extractedCss.trim();
       if (finalCss) {
-        zip.file('style.css', finalCss);
+        zip.file(finalCssPath, finalCss);
       }
 
       // 资源文件（图片、字体等）
-      if (resourceMap.size > 0) {
-        const imageFolder = zip.folder('image');
-        if (imageFolder) {
-          resourceMap.forEach((resource, fileName) => {
-            try {
-              const binaryString = atob(resource.data);
-              const bytes = new Uint8Array(binaryString.length);
-              for (let i = 0; i < binaryString.length; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-              }
-              imageFolder.file(fileName, bytes);
-            } catch (e) {
-              console.warn(`无法处理资源文件 ${fileName}:`, e);
-            }
-          });
-        }
-      }
+      // 使用原始路径映射将文件保存回原始位置
+      const imageDataMap = new Map<string, { data: string; mime: string; ext: string }>();
+      const fontDataMap = new Map<string, { data: string; mime: string; ext: string }>();
       
-      // 提取字体文件（如果有的话，从 CSS 中的 @font-face）
-      // 匹配所有 @font-face 中的 data URL
-      const fontUrlRegex = /url\(["']?(data:[^"')]+)["']?\)/gi;
-      const fontUrls = new Set<string>(); // 用于去重
-      let fontUrlMatch;
-      while ((fontUrlMatch = fontUrlRegex.exec(extractedCss)) !== null) {
-        const fontDataUrl = fontUrlMatch[1];
-        // 只处理字体相关的 MIME 类型
-        if (fontDataUrl.startsWith('data:') && 
-            (fontDataUrl.includes('font') || 
-             fontDataUrl.includes('woff') || 
-             fontDataUrl.includes('otf') || 
-             fontDataUrl.includes('ttf') ||
-             fontDataUrl.includes('eot'))) {
-          fontUrls.add(fontDataUrl);
-        }
-      }
+      // 收集所有图片和字体的 dataUrl 和二进制数据
+      resourceMap.forEach((resource, fileName) => {
+        // fileName 是临时生成的，我们需要找到对应的 dataUrl
+        // 通过遍历 imageReplacements 和 CSS 中的 dataUrl 来匹配
+      });
       
-      const fontsFolder = zip.folder('fonts');
-      fontUrls.forEach((fontDataUrl) => {
-        const fontMatch2 = fontDataUrl.match(/^data:([^;]+);base64,(.+)$/);
-        if (fontMatch2) {
-          const mime = fontMatch2[1];
-          const base64 = fontMatch2[2];
-          let ext = 'ttf';
-          if (mime.includes('woff2')) ext = 'woff2';
-          else if (mime.includes('woff')) ext = 'woff';
-          else if (mime.includes('otf')) ext = 'otf';
-          else if (mime.includes('eot')) ext = 'eot';
-          
-          const fontFileName = `font_${resourceIndex++}.${ext}`;
-          if (fontsFolder) {
-            try {
-              const binaryString = atob(base64);
-              const bytes = new Uint8Array(binaryString.length);
-              for (let i = 0; i < binaryString.length; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-              }
-              fontsFolder.file(fontFileName, bytes);
-              // 更新 CSS 中的字体路径（转义特殊字符）
-              const escapedUrl = fontDataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-              extractedCss = extractedCss.replace(
-                new RegExp(escapedUrl, 'g'),
-                `fonts/${fontFileName}`
-              );
-            } catch (e) {
-              console.warn(`无法处理字体文件:`, e);
+      // 从 HTML 中的图片提取 dataUrl 和原始路径
+      images.forEach((img) => {
+        const src = img.getAttribute('src') || '';
+        if (src.startsWith('data:')) {
+          const originalPath = originalZipStructure?.imagePathMap.get(src);
+          if (originalPath) {
+            const match = src.match(/^data:([^;]+);base64,(.+)$/);
+            if (match) {
+              const mime = match[1];
+              const base64 = match[2];
+              const ext = mime.split('/')[1] || 'png';
+              imageDataMap.set(originalPath, { data: base64, mime, ext });
             }
           }
+        }
+      });
+      
+      // 从 CSS 中提取图片和字体的 dataUrl 和原始路径
+      const cssDataUrlRegex = /url\(["']?(data:[^"')]+)["']?\)/gi;
+      let cssDataUrlMatch;
+      let newResourceIndex = 0; // 用于新添加的资源
+      while ((cssDataUrlMatch = cssDataUrlRegex.exec(extractedCss)) !== null) {
+        const dataUrl = cssDataUrlMatch[1];
+        // 检查是图片还是字体
+        const isFont = dataUrl.includes('font') || dataUrl.includes('woff') || 
+                      dataUrl.includes('otf') || dataUrl.includes('ttf') || dataUrl.includes('eot');
+        
+        if (isFont) {
+          const originalPath = originalZipStructure?.fontPathMap.get(dataUrl);
+          const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+          if (match) {
+            const mime = match[1];
+            const base64 = match[2];
+            let ext = 'ttf';
+            if (mime.includes('woff2')) ext = 'woff2';
+            else if (mime.includes('woff')) ext = 'woff';
+            else if (mime.includes('otf')) ext = 'otf';
+            else if (mime.includes('eot')) ext = 'eot';
+            
+            if (originalPath) {
+              // 使用原始路径
+              fontDataMap.set(originalPath, { data: base64, mime, ext });
+            } else {
+              // 新添加的字体，使用默认路径
+              const defaultPath = htmlDirForStructure 
+                ? `${htmlDirForStructure}/fonts/font_${newResourceIndex++}.${ext}`
+                : `fonts/font_${newResourceIndex++}.${ext}`;
+              fontDataMap.set(defaultPath, { data: base64, mime, ext });
+            }
+          }
+        } else {
+          const originalPath = originalZipStructure?.imagePathMap.get(dataUrl);
+          const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+          if (match) {
+            const mime = match[1];
+            const base64 = match[2];
+            const ext = mime.split('/')[1] || 'png';
+            
+            if (originalPath) {
+              // 使用原始路径
+              imageDataMap.set(originalPath, { data: base64, mime, ext });
+            } else {
+              // 新添加的图片，使用默认路径
+              const defaultPath = htmlDirForStructure 
+                ? `${htmlDirForStructure}/image/image_${newResourceIndex++}.${ext}`
+                : `image/image_${newResourceIndex++}.${ext}`;
+              imageDataMap.set(defaultPath, { data: base64, mime, ext });
+            }
+          }
+        }
+      }
+      
+      // 处理 HTML 中新添加的图片（不在原始 ZIP 中的）
+      images.forEach((img) => {
+        const src = img.getAttribute('src') || '';
+        if (src.startsWith('data:')) {
+          const originalPath = originalZipStructure?.imagePathMap.get(src);
+          if (!originalPath && !imageDataMap.has(src)) {
+            // 新添加的图片，需要提取并保存
+            const match = src.match(/^data:([^;]+);base64,(.+)$/);
+            if (match) {
+              const mime = match[1];
+              const base64 = match[2];
+              const ext = mime.split('/')[1] || 'png';
+              const defaultPath = htmlDirForStructure 
+                ? `${htmlDirForStructure}/image/image_${newResourceIndex++}.${ext}`
+                : `image/image_${newResourceIndex++}.${ext}`;
+              imageDataMap.set(defaultPath, { data: base64, mime, ext });
+              imageReplacements.set(src, defaultPath);
+            }
+          }
+        }
+      });
+      
+      // 保存图片文件到原始路径
+      imageDataMap.forEach((resource, originalPath) => {
+        try {
+          const binaryString = atob(resource.data);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          // 确保目录存在
+          const pathParts = originalPath.split('/');
+          if (pathParts.length > 1) {
+            const dirPath = pathParts.slice(0, -1).join('/');
+            const fileName = pathParts[pathParts.length - 1];
+            const folder = zip.folder(dirPath);
+            if (folder) {
+              folder.file(fileName, bytes);
+            }
+          } else {
+            zip.file(originalPath, bytes);
+          }
+        } catch (e) {
+          console.warn(`无法保存图片文件 ${originalPath}:`, e);
+        }
+      });
+      
+      // 保存字体文件到原始路径
+      fontDataMap.forEach((resource, originalPath) => {
+        try {
+          const binaryString = atob(resource.data);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          // 确保目录存在
+          const pathParts = originalPath.split('/');
+          if (pathParts.length > 1) {
+            const dirPath = pathParts.slice(0, -1).join('/');
+            const fileName = pathParts[pathParts.length - 1];
+            const folder = zip.folder(dirPath);
+            if (folder) {
+              folder.file(fileName, bytes);
+            }
+          } else {
+            zip.file(originalPath, bytes);
+          }
+        } catch (e) {
+          console.warn(`无法保存字体文件 ${originalPath}:`, e);
+        }
+      });
+      
+      // 字体文件已经在上面处理了，这里只需要更新 CSS 中的路径引用
+      // 遍历 fontDataMap，更新 CSS 中的字体路径为原始路径（相对于 CSS 文件）
+      fontDataMap.forEach((resource, originalPath) => {
+        // 找到对应的 dataUrl（需要从 fontPathMap 反向查找）
+        let dataUrl = '';
+        originalZipStructure?.fontPathMap.forEach((path, url) => {
+          if (path === originalPath) {
+            dataUrl = url;
+          }
+        });
+        
+        if (dataUrl) {
+          // 计算字体路径相对于 CSS 文件的路径
+          const cssDirForFonts = finalCssPath.includes('/') 
+            ? finalCssPath.split('/').slice(0, -1).join('/')
+            : '';
+          const fontDir = originalPath.includes('/') 
+            ? originalPath.split('/').slice(0, -1).join('/')
+            : '';
+          const fontFileName = originalPath.split('/').pop() || originalPath;
+          
+          let fontRelativePath = originalPath;
+          if (cssDirForFonts && fontDir) {
+            // 计算相对路径
+            if (cssDirForFonts === fontDir) {
+              // CSS 和字体在同一目录
+              fontRelativePath = fontFileName;
+            } else {
+              // 需要计算相对路径（简化处理，使用原始路径）
+              fontRelativePath = originalPath;
+            }
+          } else if (!cssDirForFonts && fontDir) {
+            // CSS 在根目录，字体在子目录
+            fontRelativePath = originalPath;
+          } else if (cssDirForFonts && !fontDir) {
+            // CSS 在子目录，字体在根目录
+            const upLevels = cssDirForFonts.split('/').length;
+            fontRelativePath = '../'.repeat(upLevels) + fontFileName;
+          }
+          
+          // 更新 CSS 中的字体路径
+          const escapedUrl = dataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          extractedCss = extractedCss.replace(
+            new RegExp(escapedUrl, 'g'),
+            fontRelativePath
+          );
         }
       });
 
@@ -1692,7 +2018,7 @@ export const TemplateGenPage: React.FC = () => {
       setError(err.message || "保存模板失败");
       console.error("保存模板错误:", err);
     }
-  }, [htmlContent, cssContent, htmlFileName, selectedBackground, previewIframeRef]);
+  }, [htmlContent, cssContent, htmlFileName, selectedBackground, previewIframeRef, originalZipStructure]);
 
   return (
     <div className="template-gen-page">
@@ -2169,17 +2495,60 @@ export const TemplateGenPage: React.FC = () => {
                         {/* 右边：可编辑的值 */}
                         <div className="template-gen-field-value-wrapper">
                           {f.name.includes('_src') || f.name.includes('image') ? (
-                            <div className="template-gen-field-image-input-wrapper">
-                              {selectedFieldValue.startsWith('data:image') ? (
-                                <img 
-                                  src={selectedFieldValue} 
-                                  alt={f.name}
-                                  className="template-gen-field-image-preview-small"
-                                  onError={(e) => {
-                                    (e.target as HTMLImageElement).style.display = 'none';
-                                  }}
-                                />
-                              ) : (
+                            <>
+                              <div 
+                                className="image-drop-zone"
+                                onDragOver={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  e.currentTarget.classList.add('drag-over');
+                                }}
+                                onDragLeave={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  e.currentTarget.classList.remove('drag-over');
+                                }}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  e.currentTarget.classList.remove('drag-over');
+                                  
+                                  // 获取拖拽的素材 URL
+                                  const assetUrl = e.dataTransfer.getData('text/plain') || 
+                                                  e.dataTransfer.getData('application/asset-url');
+                                  
+                                  if (assetUrl) {
+                                    // 直接更新字段值
+                                    updateFieldValue(f.name, assetUrl);
+                                    // 立即更新显示值，避免从 iframe 读取时图片还未加载完成
+                                    setSelectedFieldValue(assetUrl);
+                                    setSuccess(`已替换 ${f.label || f.name} 的素材`);
+                                  }
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {selectedFieldValue && selectedFieldValue.startsWith('data:image') ? (
+                                  <img 
+                                    src={selectedFieldValue} 
+                                    alt={f.name}
+                                    className="template-gen-field-image-preview-small"
+                                    onError={(e) => {
+                                      (e.target as HTMLImageElement).style.display = 'none';
+                                    }}
+                                  />
+                                ) : selectedFieldValue ? (
+                                  <div className="drop-zone-content">
+                                    <div className="drop-zone-icon">📎</div>
+                                    <div className="drop-zone-text">已设置图片，拖拽新素材替换</div>
+                                  </div>
+                                ) : (
+                                  <div className="drop-zone-content">
+                                    <div className="drop-zone-icon">📎</div>
+                                    <div className="drop-zone-text">从右侧素材库拖拽素材到这里替换</div>
+                                  </div>
+                                )}
+                              </div>
+                              {selectedFieldValue && !selectedFieldValue.startsWith('data:image') && (
                                 <input
                                   type="text"
                                   className="template-gen-field-value-input"
@@ -2191,9 +2560,10 @@ export const TemplateGenPage: React.FC = () => {
                                   }}
                                   placeholder="输入图片 URL"
                                   onClick={(e) => e.stopPropagation()}
+                                  style={{ marginTop: '8px' }}
                                 />
                               )}
-                            </div>
+                            </>
                           ) : (
                             <input
                               type="text"
