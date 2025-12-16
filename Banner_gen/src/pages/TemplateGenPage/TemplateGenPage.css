@@ -369,6 +369,12 @@
   box-shadow: none;
 }
 
+.background-item-large.drag-over {
+  border: 2px solid #007bff !important;
+  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.2) !important;
+  background: rgba(0, 123, 255, 0.05) !important;
+}
+
 .background-item-large.selected {
   border: none;
   background: transparent;
@@ -535,6 +541,18 @@
   text-align: center;
   color: rgba(0, 0, 0, 0.4);
   margin-top: 12px;
+  border: 2px dashed #d1d5db;
+  border-radius: 8px;
+  background: #f9fafb;
+  transition: all 0.2s ease;
+  cursor: default;
+}
+
+.background-empty.drag-over {
+  border-color: #007bff;
+  background: #e7f3ff;
+  border-style: solid;
+  color: #007bff;
 }
 
 .background-empty p {
@@ -1099,8 +1117,15 @@
   color: #374151;
 }
 
+.image-gen-input-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
 .image-gen-textarea {
-  width: 100%;
+  flex: 1;
+  min-width: 0; /* 允许 flex item 缩小 */
   padding: 10px 12px;
   border: 1px solid #d1d5db;
   border-radius: 6px;
@@ -1111,6 +1136,38 @@
   transition: border-color 0.2s, box-shadow 0.2s;
   background: #ffffff;
   color: #111827;
+}
+
+.image-gen-button {
+  flex: 0 0 20%; /* 固定宽度 20%，不缩放 */
+  min-width: 100px; /* 最小宽度 */
+  padding: 10px 16px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s, transform 0.1s;
+  white-space: nowrap;
+  align-self: flex-start; /* 与 textarea 顶部对齐 */
+  margin-top: 0;
+}
+
+.image-gen-button:hover:not(:disabled) {
+  background-color: #0056b3;
+  transform: translateY(-1px);
+}
+
+.image-gen-button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.image-gen-button:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .image-gen-textarea:focus {

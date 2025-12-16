@@ -148,3 +148,4 @@ VOLC_REGION=cn-north-1
 | 认证方式 | HMAC 签名 | Bearer Token |
 | 推荐场景 | 现有功能保持 | 新功能开发 |
 
+

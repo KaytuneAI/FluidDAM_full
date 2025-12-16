@@ -2,9 +2,25 @@ import express from 'express'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import dotenv from 'dotenv'
+import { Signer } from '@volcengine/openapi'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+
+// 加载 .env 文件（用于即梦 AI API Key）
+// 明确指定 .env 文件路径，确保无论从哪里运行都能找到
+const envPath = path.join(__dirname, '.env')
+const envResult = dotenv.config({ path: envPath })
+if (envResult.error) {
+  console.warn('[WARN] 无法加载 .env 文件:', envPath, envResult.error.message)
+} else {
+  console.log('[INFO] .env 文件加载成功:', envPath)
+  // 调试：检查关键环境变量是否加载（不打印实际值）
+  const hasAccessKey = !!process.env.VOLC_ACCESSKEY
+  const hasSecretKey = !!process.env.VOLC_SECRETKEY
+  console.log('[INFO] 环境变量检查: VOLC_ACCESSKEY=' + (hasAccessKey ? '已设置' : '未设置'), 'VOLC_SECRETKEY=' + (hasSecretKey ? '已设置' : '未设置'))
+}
 
 const app = express()
 const PORT = 3001
@@ -654,6 +670,747 @@ app.get('/api/logs/files', (req, res) => {
 });
 
 // 注意：分享链接现在直接指向前端应用，不再需要重定向路由
+
+// 即梦 AI 图片生成代理端点（解决 CORS 问题）
+// 优先使用 ModelArk 体系（即梦 4.0），如果没有配置则回退到 req_key 体系
+app.post('/api/jimeng-ai/generate', async (req, res) => {
+  try {
+    const { prompt, imageUrl, imageBase64, width, height, style, negativePrompt, mode } = req.body
+
+    // 关键调试日志：检查后端接收到的原始参数
+    // 使用 console.log 直接输出，确保能看到详细数据
+    console.log('=== 后端接收到的原始请求参数 ===')
+    console.log('hasPrompt:', !!prompt)
+    console.log('promptLength:', prompt ? prompt.length : 0)
+    console.log('hasImageUrl:', !!imageUrl)
+    console.log('imageUrlType:', imageUrl ? typeof imageUrl : 'none')
+    console.log('imageUrlValue:', imageUrl ? (imageUrl.substring(0, 100) + (imageUrl.length > 100 ? '...' : '')) : 'none')
+    console.log('hasImageBase64:', !!imageBase64)
+    console.log('imageBase64Type:', imageBase64 ? typeof imageBase64 : 'none')
+    console.log('imageBase64Length:', imageBase64 ? imageBase64.length : 0)
+    console.log('imageBase64Prefix:', imageBase64 ? (imageBase64.substring(0, 100) + '...') : 'none')
+    console.log('mode:', mode)
+    console.log('allBodyKeys:', Object.keys(req.body))
+    console.log('req.body:', JSON.stringify({
+      prompt: prompt ? prompt.substring(0, 50) + '...' : null,
+      hasImageUrl: !!imageUrl,
+      hasImageBase64: !!imageBase64,
+      imageBase64Length: imageBase64 ? imageBase64.length : 0,
+      mode: mode
+    }, null, 2))
+    log('INFO', '后端接收到的原始请求参数', {
+      hasPrompt: !!prompt,
+      promptLength: prompt ? prompt.length : 0,
+      hasImageUrl: !!imageUrl,
+      hasImageBase64: !!imageBase64,
+      imageBase64Length: imageBase64 ? imageBase64.length : 0,
+      mode: mode
+    })
+
+    if (!prompt) {
+      return res.status(400).json({ success: false, error: '提示词不能为空' })
+    }
+
+    // ============================================
+    // 使用 req_key 体系（即梦 4.0）
+    // 根据客服确认：4.0 i2i 和 t2i 使用相同的 req_key = jimeng_t2i_v40
+    // 区别仅在于是否有 image_base64 字段
+    // ============================================
+
+    // 从环境变量获取火山引擎配置（优先使用规范的环境变量名）
+    // 注意：VITE_ 前缀的环境变量不应该在后端使用（它们是前端专用的），这里保留仅为向后兼容
+    // 使用 trim() 避免 .env 文件末尾空格导致签名不一致
+    const accessKeyId = (process.env.VOLC_ACCESSKEY || process.env.VOLCENGINE_ACCESS_KEY_ID || process.env.VITE_JIMENG_AI_API_KEY || '').trim()
+    const secretKey = (process.env.VOLC_SECRETKEY || process.env.VOLCENGINE_SECRET_ACCESS_KEY || process.env.VITE_JIMENG_AI_API_SECRET || '').trim()
+    const baseUrl = process.env.VITE_JIMENG_AI_BASE_URL || process.env.JIMENG_AI_BASE_URL || 'https://visual.volcengineapi.com'
+    const region = process.env.VOLC_REGION || process.env.VOLCENGINE_REGION || 'cn-north-1' // 默认使用华北1区
+    // 调试信息：检查环境变量加载情况（仅在开发环境或调试时输出）
+    if (process.env.NODE_ENV !== 'production') {
+      const envCheck = {
+        VOLC_ACCESSKEY: !!process.env.VOLC_ACCESSKEY,
+        VOLCENGINE_ACCESS_KEY_ID: !!process.env.VOLCENGINE_ACCESS_KEY_ID,
+        VITE_JIMENG_AI_API_KEY: !!process.env.VITE_JIMENG_AI_API_KEY,
+        VOLC_SECRETKEY: !!process.env.VOLC_SECRETKEY,
+        VOLCENGINE_SECRET_ACCESS_KEY: !!process.env.VOLCENGINE_SECRET_ACCESS_KEY,
+        VITE_JIMENG_AI_API_SECRET: !!process.env.VITE_JIMENG_AI_API_SECRET,
+        envPath: path.join(__dirname, '.env'),
+        resolvedAccessKey: !!accessKeyId,
+        resolvedSecretKey: !!secretKey
+      }
+      console.log('[DEBUG] 环境变量检查:', JSON.stringify(envCheck, null, 2))
+    }
+
+    if (!accessKeyId || !secretKey) {
+      log('ERROR', '火山引擎 API Key 或 Secret 未配置', {
+        hasAccessKey: !!accessKeyId,
+        hasSecretKey: !!secretKey,
+        envPath: path.join(__dirname, '.env'),
+        availableEnvKeys: Object.keys(process.env).filter(k => k.includes('VOLC') || k.includes('JIMENG'))
+      })
+      return res.status(500).json({ 
+        success: false, 
+        error: '火山引擎 API Key 或 Secret 未配置，请在 .env 文件中设置 VOLC_ACCESSKEY 和 VOLC_SECRETKEY',
+        debug: {
+          envPath: path.join(__dirname, '.env'),
+          hasAccessKey: !!accessKeyId,
+          hasSecretKey: !!secretKey,
+          availableKeys: Object.keys(process.env).filter(k => k.includes('VOLC') || k.includes('JIMENG')),
+          checkKeys: {
+            VOLC_ACCESSKEY: !!process.env.VOLC_ACCESSKEY,
+            VOLCENGINE_ACCESS_KEY_ID: !!process.env.VOLCENGINE_ACCESS_KEY_ID,
+            VITE_JIMENG_AI_API_KEY: !!process.env.VITE_JIMENG_AI_API_KEY,
+            VOLC_SECRETKEY: !!process.env.VOLC_SECRETKEY,
+            VOLCENGINE_SECRET_ACCESS_KEY: !!process.env.VOLCENGINE_SECRET_ACCESS_KEY,
+            VITE_JIMENG_AI_API_SECRET: !!process.env.VITE_JIMENG_AI_API_SECRET
+          }
+        }
+      })
+    }
+
+    // 辅助函数：从 dataURL 中提取纯 base64（移除 data:image/...;base64, 前缀）
+    const stripDataUrl = (b64) => {
+      if (!b64 || typeof b64 !== 'string') return null
+      // 使用正则表达式移除 data:image/jpeg;base64, 或 data:image/png;base64, 等前缀
+      return b64.replace(/^data:image\/\w+;base64,/, '')
+    }
+
+    // 处理图片输入：支持两种方式
+    // 1. imageBase64: 前端直接传入 base64 字符串（dataURL 或纯 base64）
+    // 2. imageUrl: 后端下载 URL 并转换为 base64
+    let finalImageBase64 = null
+    
+    // 调试日志：检查接收到的图片参数
+    log('INFO', '即梦 AI 接收到的图片参数', {
+      hasImageBase64: !!(imageBase64 && typeof imageBase64 === 'string' && imageBase64.length > 50),
+      hasImageUrl: !!imageUrl,
+      imageBase64Type: imageBase64 ? typeof imageBase64 : 'none',
+      imageBase64Length: imageBase64 ? imageBase64.length : 0,
+      imageUrlType: imageUrl ? typeof imageUrl : 'none',
+      imageUrlPrefix: imageUrl ? (imageUrl.substring(0, 20) + '...') : 'none',
+      mode: mode
+    })
+    
+    if (imageBase64 && typeof imageBase64 === 'string' && imageBase64.length > 50) {
+      // 前端直接传入的 base64
+      finalImageBase64 = stripDataUrl(imageBase64)
+      if (!finalImageBase64) {
+        return res.status(400).json({ success: false, error: 'imageBase64 格式无效，无法提取纯 base64' })
+      }
+      log('INFO', '使用 imageBase64 参数', { 
+        base64Length: finalImageBase64.length,
+        hadPrefix: imageBase64.includes('data:image')
+      })
+    } else if (imageUrl) {
+      // 如果是 base64 dataURL，直接使用
+      if (imageUrl.startsWith('data:image')) {
+        finalImageBase64 = stripDataUrl(imageUrl)
+        if (!finalImageBase64) {
+          return res.status(400).json({ success: false, error: 'imageUrl (data URL) 格式无效，无法提取纯 base64' })
+        }
+        log('INFO', 'imageUrl 是 data URL，已提取 base64', { base64Length: finalImageBase64.length })
+      } else if (imageUrl.startsWith('blob:')) {
+        // Blob URL：后端无法直接下载，应该由前端转换为 base64 再传递
+        log('WARN', '收到 Blob URL，后端无法处理，请前端转换为 base64', { imageUrl: imageUrl.substring(0, 50) + '...' })
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Blob URL 无法在后端处理，请前端先将图片转换为 base64 再传递' 
+        })
+      } else {
+        // 如果是普通 URL，需要先下载并转换为 base64
+        try {
+          log('INFO', '开始下载图片 URL', { url: imageUrl.substring(0, 100) + '...' })
+          const imageResponse = await fetch(imageUrl)
+          const imageBlob = await imageResponse.blob()
+          const imageBuffer = Buffer.from(await imageBlob.arrayBuffer())
+          // 转换为纯 base64（不带 data:image/...;base64, 前缀）
+          finalImageBase64 = imageBuffer.toString('base64')
+          log('INFO', '图片下载并转换为 base64 成功', { base64Length: finalImageBase64.length })
+        } catch (error) {
+          log('ERROR', '下载图片失败', { error: error.message, url: imageUrl.substring(0, 100) })
+          return res.status(400).json({ success: false, error: '图片下载失败: ' + error.message })
+        }
+      }
+    }
+    
+    // 判断模式：根据是否有图片和 mode 参数
+    // 即梦 4.0：有图 → i2i，无图 → t2i，都使用 req_key = jimeng_t2i_v40
+    const hasImage = finalImageBase64 && typeof finalImageBase64 === 'string' && finalImageBase64.length > 50
+    const isI2I = hasImage
+    
+    // 关键调试日志：检查图片处理结果
+    console.log('=== 图片处理结果检查 ===')
+    console.log('hasImage:', hasImage)
+    console.log('isI2I:', isI2I)
+    console.log('finalImageBase64Type:', finalImageBase64 ? typeof finalImageBase64 : 'null')
+    console.log('finalImageBase64Length:', finalImageBase64 ? finalImageBase64.length : 0)
+    console.log('finalImageBase64Exists:', !!finalImageBase64)
+    console.log('receivedMode:', mode)
+    log('INFO', '图片处理结果检查', {
+      hasImage: hasImage,
+      isI2I: isI2I,
+      finalImageBase64Type: finalImageBase64 ? typeof finalImageBase64 : 'null',
+      finalImageBase64Length: finalImageBase64 ? finalImageBase64.length : 0,
+      receivedMode: mode
+    })
+    
+    // 构建请求体 - 火山引擎 API 格式（即梦 4.0）
+    // 使用 req_key = jimeng_t2i_v40（i2i 和 t2i 共用）
+    // 支持自定义 width/height
+    const requestBody = {
+      req_key: 'jimeng_t2i_v40', // 即梦 4.0，i2i 和 t2i 都用这个
+      prompt: prompt,
+      width: width && height ? Number(width) : 1024,  // 支持自定义，默认 1024
+      height: width && height ? Number(height) : 1024, // 支持自定义，默认 1024
+      seed: -1,     // 默认随机
+    }
+
+    // 如果有负面提示词
+    if (negativePrompt) {
+      requestBody.negative_prompt = negativePrompt
+    }
+
+    // 如果有风格
+    if (style) {
+      requestBody.style = style
+    }
+
+    // 图生图处理：如果有图片，使用 binary_data_base64 数组格式（与 3.0 一致）
+    // 已验证：4.0 版本也支持 binary_data_base64 数组格式
+    if (hasImage) {
+      // 使用 binary_data_base64 数组格式（与 3.0 版本完全一致）
+      requestBody.binary_data_base64 = [finalImageBase64]
+      
+      log('INFO', '即梦 AI 图生图模式（i2i 4.0）', { 
+        mode: 'i2i',
+        req_key: requestBody.req_key,
+        hasImage: true,
+        imageBase64Length: finalImageBase64.length,
+        binaryDataBase64IsArray: Array.isArray(requestBody.binary_data_base64),
+        note: '使用 jimeng_t2i_v40，binary_data_base64 字段（数组格式）作为参考图，与 3.0 版本一致'
+      })
+    } else {
+      log('INFO', '即梦 AI 文生图模式（t2i 4.0）', { 
+        mode: 't2i',
+        req_key: requestBody.req_key
+      })
+    }
+    
+    // 调试日志：打印最终 payload（不包含敏感信息）
+    log('INFO', '即梦 AI 最终 payload（发送给火山）', {
+      mode: isI2I ? 'i2i' : 't2i',
+      req_key: requestBody.req_key,
+      width: requestBody.width,
+      height: requestBody.height,
+      hasBinaryDataBase64: !!requestBody.binary_data_base64,
+      binaryDataBase64FieldExists: 'binary_data_base64' in requestBody,
+      binaryDataBase64IsArray: requestBody.binary_data_base64 ? Array.isArray(requestBody.binary_data_base64) : false,
+      binaryDataBase64ArrayLength: requestBody.binary_data_base64 && Array.isArray(requestBody.binary_data_base64) ? requestBody.binary_data_base64.length : 0,
+      hasImageBase64: !!requestBody.image_base64,
+      imageBase64FieldExists: 'image_base64' in requestBody,
+      hasNegativePrompt: !!requestBody.negative_prompt,
+      hasStyle: !!requestBody.style,
+      promptLength: prompt.length,
+      promptPreview: prompt.substring(0, 100) + '...'
+    })
+    
+    // 额外检查：如果应该是 i2i 但没有图片字段，这是严重错误
+    if (isI2I && !requestBody.binary_data_base64 && !requestBody.image_base64) {
+      log('ERROR', '严重错误：i2i 模式下 requestBody 中没有图片字段！', {
+        isI2I,
+        hasImage,
+        finalImageBase64Exists: !!finalImageBase64,
+        requestBodyKeys: Object.keys(requestBody),
+        hasBinaryDataBase64: !!requestBody.binary_data_base64,
+        hasImageBase64: !!requestBody.image_base64
+      })
+    }
+    
+    // 调试：打印完整的请求体结构（不包含 base64 的内容，只显示是否存在）
+    console.log('=== 发送给火山的请求体结构 ===')
+    console.log('req_key:', requestBody.req_key)
+    console.log('hasBinaryDataBase64:', !!requestBody.binary_data_base64)
+    console.log('binaryDataBase64IsArray:', requestBody.binary_data_base64 ? Array.isArray(requestBody.binary_data_base64) : false)
+    console.log('binaryDataBase64ArrayLength:', requestBody.binary_data_base64 && Array.isArray(requestBody.binary_data_base64) ? requestBody.binary_data_base64.length : 0)
+    if (requestBody.binary_data_base64 && Array.isArray(requestBody.binary_data_base64) && requestBody.binary_data_base64.length > 0) {
+      console.log('binaryDataBase64FirstItemLength:', requestBody.binary_data_base64[0].length)
+      console.log('binaryDataBase64FirstItemPrefix:', requestBody.binary_data_base64[0].substring(0, 30) + '...')
+    }
+    console.log('hasImageBase64:', !!requestBody.image_base64)
+    console.log('promptLength:', prompt.length)
+    console.log('所有字段:', Object.keys(requestBody))
+
+    // 构建火山引擎 API 请求配置
+    // 使用 OpenAPI HMAC 签名认证
+    const action = 'CVSync2AsyncSubmitTask'
+    const version = '2022-08-31'
+    
+    // Service 名称必须是 'cv'
+    const service = 'cv'
+
+    // 解析 Host，用于签名头部
+    const urlObj = new URL(baseUrl)
+    const host = urlObj.host
+
+    // 构建请求对象（Signer 需要的格式）
+    const requestObj = {
+      region: region,
+      method: 'POST',
+      pathname: '/',
+      params: {
+        Action: action,
+        Version: version,
+      },
+      headers: {
+        'Content-Type': 'application/json',
+        'Host': host,
+      },
+      body: JSON.stringify(requestBody),
+    }
+
+    // 使用 Signer 生成 HMAC 签名
+    const signer = new Signer(requestObj, service)
+
+    // 添加认证头（使用 addAuthorization 方法生成 HMAC-SHA256 签名）
+    const credentials = {
+      accessKeyId: accessKeyId,
+      secretKey: secretKey, // 必须是 secretKey，不是 secretAccessKey
+    }
+    signer.addAuthorization(credentials)
+
+    // 获取签名后的请求头（包含 X-Date, X-Content-Sha256, Authorization）
+    const signedHeaders = requestObj.headers
+
+    // 构建完整的 API URL（查询参数在 URL 中）
+    const queryParams = new URLSearchParams({
+      Action: action,
+      Version: version,
+    })
+    const apiEndpoint = `${baseUrl}?${queryParams.toString()}`
+    
+    log('INFO', '调用即梦 AI API - 提交任务', { 
+      endpoint: apiEndpoint,
+      baseUrl, 
+      region,
+      action,
+      version,
+      service,
+      host,
+      req_key: requestBody.req_key,
+      width: requestBody.width,
+      height: requestBody.height,
+      hasImage: !!(requestBody.binary_data_base64 || requestBody.image_base64),
+      promptLength: prompt.length,
+      hasNegativePrompt: !!requestBody.negative_prompt
+    })
+    
+    console.log('[Jimeng AI] Request URL:', apiEndpoint)
+    console.log('[Jimeng AI] Request Headers:', { ...signedHeaders, Authorization: signedHeaders.Authorization ? '[HMAC-SHA256 Signature]' : 'MISSING' })
+    console.log('[Jimeng AI] Action:', action)
+    console.log('[Jimeng AI] Version:', version)
+    console.log('[Jimeng AI] Service:', service)
+    console.log('[Jimeng AI] Host:', host)
+    console.log('[Jimeng AI] Credentials check:', { hasAccessKeyId: !!accessKeyId, hasSecretKey: !!secretKey, accessKeyIdLength: accessKeyId ? accessKeyId.length : 0, secretKeyLength: secretKey ? secretKey.length : 0 })
+    // 打印最终 payload（不包含 base64 的完整内容，只显示是否存在）
+    const logPayload = { ...requestBody }
+    if (logPayload.binary_data_base64) {
+      logPayload.binary_data_base64 = logPayload.binary_data_base64.map((item, idx) => 
+        `[base64 image ${idx + 1}, length: ${item.length}]`
+      )
+    }
+    if (logPayload.image_base64) {
+      logPayload.image_base64 = `[base64 image, length: ${logPayload.image_base64.length}]`
+    }
+    console.log('[Jimeng AI] Request Body:', logPayload)
+
+    // 发送请求到即梦 AI API - 提交任务
+    const submitResponse = await fetch(apiEndpoint, {
+      method: 'POST',
+      headers: signedHeaders,
+      body: requestObj.body,
+    })
+
+    if (!submitResponse.ok) {
+      const errorText = await submitResponse.text()
+      let errorData
+      try {
+        errorData = JSON.parse(errorText)
+      } catch {
+        errorData = { message: errorText || '请求失败' }
+      }
+      log('ERROR', '即梦 AI API 调用失败', { 
+        status: submitResponse.status,
+        error: errorData.Message || errorData.message || errorData.error || errorText,
+        code: errorData.Code || errorData.code,
+        requestId: errorData.RequestId || errorData.requestId,
+        requestBody: { 
+          ...requestBody, 
+          binary_data_base64: requestBody.binary_data_base64 ? '[base64 image array]' : undefined,
+          image_base64: requestBody.image_base64 ? '[base64 image]' : undefined 
+        },
+      })
+      return res.status(submitResponse.status).json({
+        success: false,
+        error: errorData.Message || errorData.message || errorData.error || errorText || `HTTP error! status: ${submitResponse.status}`,
+        code: errorData.Code || errorData.code,
+        requestId: errorData.RequestId || errorData.requestId,
+        details: errorData
+      })
+    }
+
+    const submitData = await submitResponse.json()
+
+    // 检查响应格式 - 火山引擎通常返回 ResponseMetadata 和 Result
+    let taskId = null
+    if (submitData.ResponseMetadata && submitData.ResponseMetadata.Error) {
+      const error = submitData.ResponseMetadata.Error
+      log('ERROR', '即梦 AI 提交任务失败', { 
+        code: error.Code,
+        message: error.Message,
+        requestId: submitData.ResponseMetadata.RequestId
+      })
+      return res.status(400).json({
+        success: false,
+        error: error.Message || '提交任务失败',
+        code: error.Code,
+        requestId: submitData.ResponseMetadata.RequestId,
+        details: submitData
+      })
+    }
+
+    // 提取 task_id
+    if (submitData.Result && submitData.Result.task_id) {
+      taskId = submitData.Result.task_id
+    } else if (submitData.task_id) {
+      taskId = submitData.task_id
+    } else if (submitData.data && submitData.data.task_id) {
+      taskId = submitData.data.task_id
+    }
+
+    if (!taskId) {
+      log('ERROR', '即梦 AI 响应中未找到 task_id', { response: submitData })
+      return res.status(500).json({
+        success: false,
+        error: '提交任务成功但未返回 task_id',
+        details: submitData
+      })
+    }
+
+    log('INFO', '即梦 AI 任务提交成功', { taskId })
+
+    // 轮询获取结果（改进版：区分排队和执行状态）
+    const maxPollingAttempts = 60 // 最多 60 次
+    const pollingInterval = 2000 // 2 秒间隔    
+    // 区分排队和执行状态的超时
+    let inQueueStartTime = null // 记录进入排队状态的时间
+    let runningStartTime = null // 记录进入执行状态的时间
+    const maxQueueWaitTime = 180000 // 排队最大等待时间：3 分钟（180 秒）
+    const maxRunningTime = 120000 // 执行最大等待时间：2 分钟（120 秒）
+    
+    let lastStatus = 'unknown' // 记录上一次的状态
+    for (let attempt = 1; attempt <= maxPollingAttempts; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, pollingInterval))
+
+      // 构建查询结果的请求
+      const getResultRequestObj = {
+        region: region,
+        method: 'POST',
+        pathname: '/',
+        params: {
+          Action: 'CVSync2AsyncGetResult',
+          Version: version,
+        },
+        headers: {
+          'Content-Type': 'application/json',
+          'Host': host,
+        },
+        body: JSON.stringify({
+          req_key: requestBody.req_key, // 使用相同的 req_key
+          task_id: taskId,
+        }),
+      }
+
+      const resultSigner = new Signer(getResultRequestObj, service)
+      resultSigner.addAuthorization(credentials)
+      const resultSignedHeaders = getResultRequestObj.headers
+
+      const resultQueryParams = new URLSearchParams({
+        Action: 'CVSync2AsyncGetResult',
+        Version: version,
+      })
+      const resultEndpoint = `${baseUrl}?${resultQueryParams.toString()}`
+
+      try {
+        const resultResponse = await fetch(resultEndpoint, {
+          method: 'POST',
+          headers: resultSignedHeaders,
+          body: getResultRequestObj.body,
+        })
+
+        if (!resultResponse.ok) {
+          const errorText = await resultResponse.text()
+          log('WARN', `即梦 AI 查询结果失败 (尝试 ${attempt}/${maxPollingAttempts})`, { 
+            status: resultResponse.status,
+            error: errorText
+          })
+          continue
+        }
+
+        const resultData = await resultResponse.json()
+
+        // 检查是否有错误
+        if (resultData.ResponseMetadata && resultData.ResponseMetadata.Error) {
+          const error = resultData.ResponseMetadata.Error
+          // 如果错误是任务还在处理中，继续轮询
+          if (error.Code === 'Processing' || error.Message?.includes('处理中') || error.Message?.includes('processing')) {
+            log('INFO', `即梦 AI 任务处理中 (尝试 ${attempt}/${maxPollingAttempts})`, { taskId })
+            continue
+          }
+          // 其他错误直接返回
+          log('ERROR', '即梦 AI 查询结果失败', { 
+            code: error.Code,
+            message: error.Message,
+            requestId: resultData.ResponseMetadata.RequestId
+          })
+          return res.status(400).json({
+            success: false,
+            error: error.Message || '查询结果失败',
+            code: error.Code,
+            requestId: resultData.ResponseMetadata.RequestId,
+            taskId,
+            details: resultData
+          })
+        }
+
+        // 检查结果是否完成
+        const data = resultData.data || resultData.Result || resultData.result || resultData
+        const status = (data && data.status) || resultData.status || 'unknown'
+        
+        // 跟踪状态变化，分别计算超时
+        const now = Date.now()
+        if (status === 'in_queue') {
+          if (lastStatus !== 'in_queue') {
+            // 刚进入排队状态
+            inQueueStartTime = now
+            log('INFO', '即梦 AI 任务进入排队状态', { taskId, attempt })
+          }
+          // 检查排队超时
+          if (inQueueStartTime && (now - inQueueStartTime) > maxQueueWaitTime) {
+            log('WARN', '即梦 AI 任务排队超时', { 
+              taskId, 
+              queueWaitTime: now - inQueueStartTime,
+              maxQueueWaitTime 
+            })
+            // 返回 pending 状态和 task_id，让前端继续查询
+            return res.json({
+              success: true,
+              status: 'pending',
+              taskId: taskId,
+              message: '任务正在排队中，请稍后查询结果',
+              queueTime: Math.floor((now - inQueueStartTime) / 1000) // 秒
+            })
+          }
+        } else if (status === 'running' || status === 'processing') {
+          if (lastStatus === 'in_queue' || lastStatus === 'unknown') {
+            // 从排队进入执行状态
+            runningStartTime = now
+            log('INFO', '即梦 AI 任务进入执行状态', { taskId, attempt, queueTime: inQueueStartTime ? (now - inQueueStartTime) : 0 })
+          }
+          // 检查执行超时
+          if (runningStartTime && (now - runningStartTime) > maxRunningTime) {
+            log('WARN', '即梦 AI 任务执行超时', { 
+              taskId, 
+              runningTime: now - runningStartTime,
+              maxRunningTime 
+            })
+            // 返回 pending 状态和 task_id，让前端继续查询
+            return res.json({
+              success: true,
+              status: 'pending',
+              taskId: taskId,
+              message: '任务正在执行中，请稍后查询结果',
+              runningTime: Math.floor((now - runningStartTime) / 1000) // 秒
+            })
+          }
+        }
+        lastStatus = status
+        
+        // done 状态：任务完成，立即解析返回 JSON，取图片结果
+        if (status === 'done') {
+          // 打印整个 data 结构一次（脱敏），用于调试
+          log('INFO', '即梦 AI 任务完成 (done)', {
+            taskId,
+            attempt,
+            dataKeys: Object.keys(data),
+            hasImageBase64: !!data.image_base64,
+            hasBinaryDataBase64: !!(data.binary_data_base64 && Array.isArray(data.binary_data_base64) && data.binary_data_base64.length > 0),
+            hasImages: !!(data.images && Array.isArray(data.images) && data.images.length > 0),
+            hasImage: !!data.image,
+            hasImageUrl: !!data.image_url || !!(data.image_urls && Array.isArray(data.image_urls) && data.image_urls.length > 0)
+          })
+          
+          // 提取图片：兼容多种可能的字段名
+          const extractImage = (dataObj) => {
+            // 优先线 1: data.image_base64 (即梦 4.0 标准字段)
+            if (dataObj.image_base64 && typeof dataObj.image_base64 === 'string') {
+              return { imageBase64: dataObj.image_base64, imageUrl: null }
+            }
+            
+            // 优先线 2: data.binary_data_base64[0] (兼容旧格式)
+            if (dataObj.binary_data_base64 && Array.isArray(dataObj.binary_data_base64) && dataObj.binary_data_base64.length > 0) {
+              const firstImage = dataObj.binary_data_base64[0]
+              if (typeof firstImage === 'string') {
+                return { imageBase64: firstImage, imageUrl: null }
+              }
+            }
+            
+            // 优先线 3: data.images[0] (备用字段)
+            if (dataObj.images && Array.isArray(dataObj.images) && dataObj.images.length > 0) {
+              const firstImage = dataObj.images[0]
+              if (typeof firstImage === 'string') {
+                return { imageBase64: firstImage, imageUrl: null }
+              }
+              // 如果是对象，尝试提取字段
+              return { 
+                imageBase64: firstImage.image_base64 || firstImage.image, 
+                imageUrl: firstImage.image_url || firstImage.url 
+              }
+            }
+            
+            // 优先线 4: data.image_urls[0] (URL 数组)
+            if (dataObj.image_urls && Array.isArray(dataObj.image_urls) && dataObj.image_urls.length > 0) {
+              return { imageBase64: null, imageUrl: dataObj.image_urls[0] }
+            }
+            
+            // 优先线 5: 单个字段
+            if (dataObj.image) return { imageBase64: dataObj.image, imageUrl: null }
+            if (dataObj.image_url) return { imageBase64: null, imageUrl: dataObj.image_url }
+            if (dataObj.url) return { imageBase64: null, imageUrl: dataObj.url }
+            
+            return null
+          }
+          
+          const imageData = extractImage(data)
+          if (imageData && imageData.imageBase64) {
+            log('INFO', '即梦 AI 生成成功', { 
+              taskId,
+              attempt,
+              hasImageUrl: !!imageData.imageUrl,
+              hasImageBase64: !!imageData.imageBase64,
+              imageBase64Length: imageData.imageBase64 ? imageData.imageBase64.length : 0
+            })
+
+            return res.json({
+              success: true,
+              mode: isI2I ? 'i2i' : 't2i',
+              imageUrl: imageData.imageUrl,
+              imageBase64: imageData.imageBase64,
+              taskId: taskId,
+            })
+          } else if (imageData && imageData.imageUrl) {
+            // 只有 URL 没有 base64
+            log('INFO', '即梦 AI 生成成功（仅 URL）', { 
+              taskId,
+              attempt,
+              imageUrl: imageData.imageUrl
+            })
+
+            return res.json({
+              success: true,
+              imageUrl: imageData.imageUrl,
+              imageBase64: null,
+              taskId: taskId,
+            })
+          } else {
+            // done 但没有找到图片字段
+            log('WARN', '即梦 AI 任务完成但未找到图片字段', { 
+              taskId,
+              dataKeys: Object.keys(data),
+              fullData: JSON.stringify(data, null, 2).substring(0, 500) // 只打印前 500 字符用于调试
+            })
+            return res.json({
+              success: false,
+              error: '任务完成但未找到图片结果',
+              taskId: taskId,
+              details: data
+            })
+          }
+        }
+        
+        // failed/error 状态：任务失败
+        if (status === 'failed' || status === 'error') {
+          log('ERROR', '即梦 AI 任务执行失败', { 
+            taskId,
+            status,
+            error: data.error || data.message
+          })
+          return res.json({
+            success: false,
+            error: data.error || data.message || '任务执行失败',
+            taskId: taskId,
+            details: data
+          })
+        }
+        
+        // in_queue/running/processing 状态：继续轮询
+        if (['in_queue', 'running', 'processing'].includes(status)) {
+          const statusInfo = {
+            taskId,
+            status,
+            attempt,
+            totalAttempts: maxPollingAttempts
+          }
+          if (status === 'in_queue' && inQueueStartTime) {
+            statusInfo.queueTime = Math.floor((Date.now() - inQueueStartTime) / 1000)
+          }
+          if ((status === 'running' || status === 'processing') && runningStartTime) {
+            statusInfo.runningTime = Math.floor((Date.now() - runningStartTime) / 1000)
+          }
+          log('INFO', `即梦 AI 任务处理中 (尝试 ${attempt}/${maxPollingAttempts})`, statusInfo)
+          // 继续下一次轮询
+        } else {
+          // 未知状态，记录日志但继续轮询
+          log('WARN', `即梦 AI 未知状态 (尝试 ${attempt}/${maxPollingAttempts})`, { 
+            taskId,
+            status,
+            resultKeys: Object.keys(data || {})
+          })
+        }
+      } catch (pollError) {
+        log('WARN', `即梦 AI 轮询请求异常 (尝试 ${attempt}/${maxPollingAttempts})`, { 
+          error: pollError.message
+        })
+        // 继续下一次轮询
+      }
+    }
+
+    // 轮询超时（达到最大尝试次数）
+    // 返回 pending 状态和 task_id，让前端继续查询
+    log('WARN', '即梦 AI 任务轮询达到最大尝试次数', { 
+      taskId, 
+      attempts: maxPollingAttempts,
+      lastStatus: lastStatus,
+      totalTime: Math.floor((maxPollingAttempts * pollingInterval) / 1000) // 秒
+    })
+    return res.json({
+      success: true,
+      status: 'pending',
+      taskId: taskId,
+      message: '任务处理时间较长，请稍后查询结果',
+      attempts: maxPollingAttempts,
+      lastStatus: lastStatus
+    })
+
+  } catch (error) {
+    log('ERROR', '即梦 AI API 调用失败', { 
+      error: error.message,
+      stack: error.stack
+    })
+    return res.status(500).json({
+      success: false,
+      error: error.message || '即梦 AI API 调用失败',
+    })
+  }
+})
 
 app.listen(PORT, () => {
   log('INFO', `服务器启动`, { port: PORT, logsDir: logsDir });

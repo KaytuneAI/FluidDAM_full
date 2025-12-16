@@ -31,6 +31,8 @@ export const TemplateGenPage: React.FC = () => {
     htmlDir: string; // HTML 文件所在目录（用于计算相对路径）
     imagePathMap: Map<string, string>; // dataUrl -> 原始图片路径的映射
     fontPathMap: Map<string, string>; // dataUrl -> 原始字体路径的映射
+    originalFiles: Map<string, Uint8Array>; // 原始 ZIP 中所有文件的 bytes（路径 -> 文件内容）
+    originalCssContents: Map<string, string>; // CSS 路径 -> 原始 CSS 内容（文件路径引用，不包含 base64）
   } | null>(null);
   const [error, setError] = useState<string>("");
   const [success, setSuccess] = useState<string>("");
@@ -50,6 +52,8 @@ export const TemplateGenPage: React.FC = () => {
   const [backgroundSize, setBackgroundSize] = useState<number>(100); // 背景缩放百分比
   const [overlaySize, setOverlaySize] = useState<{ width: number; height: number } | null>(null); // 虚线边框尺寸
   const backgroundThumbRef = useRef<HTMLDivElement>(null);
+  // 标记是否已经从模板加载了背景样式（避免覆盖）
+  const hasLoadedBackgroundFromTemplate = useRef<boolean>(false);
   
   // 文生图相关状态
   const [showBackgroundOnly, setShowBackgroundOnly] = useState<boolean>(false); // 仅显示背景图
@@ -476,6 +480,81 @@ export const TemplateGenPage: React.FC = () => {
   }, [cssContent]);
 
   // 调整 iframe 尺寸以匹配内容（显示原始尺寸，超出视口时使用滚动条）
+  // 从 iframe 的 .container 读取背景样式并更新 state
+  const loadBackgroundStyleFromIframe = useCallback(() => {
+    if (!previewIframeRef.current) return;
+
+    try {
+      const iframeDoc = previewIframeRef.current.contentDocument || previewIframeRef.current.contentWindow?.document;
+      if (!iframeDoc) return;
+
+      const container = iframeDoc.querySelector('.container') as HTMLElement;
+      if (!container) return;
+
+      // 优先读取 inline style（这是用户保存的值），如果没有再读取 computed style
+      const inlineBgSize = container.style.backgroundSize;
+      const inlineBgPosition = container.style.backgroundPosition;
+      
+      // 如果 inline style 中有值，说明是用户保存的，需要读取
+      const hasInlineStyle = inlineBgSize || inlineBgPosition;
+      
+      if (!hasInlineStyle) {
+        // 没有 inline style，可能是默认值，不读取
+        return;
+      }
+
+      // 读取 computed style（包含 inline style 和 CSS）
+      const computedStyle = iframeDoc.defaultView?.getComputedStyle(container);
+      if (!computedStyle) return;
+
+      // 解析 backgroundSize（优先使用 inline style）
+      const bgSize = inlineBgSize || computedStyle.backgroundSize || '';
+      if (bgSize) {
+        // 处理 "150%" 或 "100% 100%" 格式
+        const sizeMatch = bgSize.match(/^(\d+(?:\.\d+)?)%/);
+        if (sizeMatch) {
+          const parsedSize = parseFloat(sizeMatch[1]);
+          if (!isNaN(parsedSize) && parsedSize > 0) {
+            setBackgroundSize(parsedSize);
+            // 同时更新原始背景大小
+            setOriginalBackgroundSize(parsedSize);
+          }
+        }
+      }
+
+      // 解析 backgroundPosition（优先使用 inline style）
+      const bgPosition = inlineBgPosition || computedStyle.backgroundPosition || '';
+      if (bgPosition) {
+        // 处理 "calc(50% + 12px) calc(50% + 34px)" 格式
+        let parsedX = 0;
+        let parsedY = 0;
+
+        // 使用全局匹配找到所有 calc(50% + Xpx) 表达式
+        const calcMatches = bgPosition.matchAll(/calc\(50%\s*\+\s*([-\d.]+)px\)/gi);
+        const matchesArray = Array.from(calcMatches);
+        
+        if (matchesArray.length >= 1) {
+          // 第一个匹配是 X 坐标
+          parsedX = parseFloat(matchesArray[0][1]) || 0;
+        }
+        if (matchesArray.length >= 2) {
+          // 第二个匹配是 Y 坐标
+          parsedY = parseFloat(matchesArray[1][1]) || 0;
+        }
+
+        // 如果解析成功（至少有一个 calc 表达式），更新 state
+        if (matchesArray.length > 0) {
+          setBackgroundPosition({ x: parsedX, y: parsedY });
+          // 同时更新原始背景位置
+          setOriginalBackgroundPosition({ x: parsedX, y: parsedY });
+          console.log('[TemplateGen] 从模板加载背景样式:', { size: bgSize, position: { x: parsedX, y: parsedY } });
+        }
+      }
+    } catch (e) {
+      console.warn('读取背景样式失败:', e);
+    }
+  }, []);
+
   const adjustIframeSize = useCallback(() => {
     const iframe = previewIframeRef.current;
     if (!iframe) return;
@@ -511,6 +590,12 @@ export const TemplateGenPage: React.FC = () => {
           // 如果超出视口，通过 CSS overflow 显示滚动条
           if (width > 0 && height > 0) {
             setIframeSize({ width, height });
+            
+            // 在设置 iframeSize 后，读取背景样式（如果存在）
+            // 延迟一点确保样式已应用
+            setTimeout(() => {
+              loadBackgroundStyleFromIframe();
+            }, 50);
           }
         }
       } catch (e) {
@@ -525,7 +610,7 @@ export const TemplateGenPage: React.FC = () => {
     // 也等待图片等资源加载
     setTimeout(checkSize, 300);
     setTimeout(checkSize, 600);
-  }, []);
+  }, [loadBackgroundStyleFromIframe]);
 
   // 当 HTML 或 CSS 内容变化时，调整 iframe 尺寸
   useEffect(() => {
@@ -552,6 +637,7 @@ export const TemplateGenPage: React.FC = () => {
   }, [iframeSize, htmlContent, cssContent, backgroundPosition, backgroundSize, originalIframeSize]);
 
   // 当模板尺寸变化时，自动调整背景图片以填满新尺寸
+  // 关键修复：如果模板里已经有 background-image（包括 AI 生成的），不要覆盖
   useEffect(() => {
     if (!iframeSize || !previewIframeRef.current) return;
 
@@ -561,15 +647,29 @@ export const TemplateGenPage: React.FC = () => {
         if (!iframeDoc) return;
 
         const container = iframeDoc.querySelector('.container') as HTMLElement;
-        if (container) {
-          // 设置背景图片填满容器（cover 模式）
+        if (!container) return;
+
+        // 🚨 核心保护：如果模板里已经有 backgroundImage，就不要覆盖
+        const inlineBgImage = container.style.backgroundImage;
+        const computedBgImage = iframeDoc.defaultView?.getComputedStyle(container).backgroundImage;
+        const hasBgImage = 
+          (inlineBgImage && inlineBgImage !== 'none' && inlineBgImage !== '') ||
+          (computedBgImage && computedBgImage !== 'none' && computedBgImage !== '');
+
+        if (hasBgImage) {
+          // 模板已有背景（包括 AI 生成的），只调整容器尺寸，不覆盖背景样式
+          container.style.width = `${iframeSize.width}px`;
+          container.style.height = `${iframeSize.height}px`;
+          console.log('[TemplateGen] 检测到模板已有背景图片，保留背景样式，只调整容器尺寸');
+          return;
+        }
+
+        // 只有「真的没有背景」时，才用 cover 模式
           container.style.backgroundSize = 'cover';
           container.style.backgroundPosition = 'center center';
           container.style.backgroundRepeat = 'no-repeat';
-          // 确保容器尺寸匹配新的 iframe 尺寸
           container.style.width = `${iframeSize.width}px`;
           container.style.height = `${iframeSize.height}px`;
-        }
       } catch (e) {
         console.warn('调整背景图片失败:', e);
       }
@@ -679,13 +779,24 @@ export const TemplateGenPage: React.FC = () => {
   useEffect(() => {
     if (!selectedBackground || !overlaySize || !iframeSize) return;
     
+    // 如果还没有从模板加载背景样式，先尝试加载
+    if (!hasLoadedBackgroundFromTemplate.current) {
+      loadBackgroundStyleFromIframe();
+      hasLoadedBackgroundFromTemplate.current = true;
+      // 加载后延迟应用，确保 state 已更新
+      const loadTimer = setTimeout(() => {
+        applyBackgroundAdjustment(selectedBackground, backgroundPosition, backgroundSize);
+      }, 150);
+      return () => clearTimeout(loadTimer);
+    }
+    
     // 延迟执行，确保 overlaySize 已经更新
     const timer = setTimeout(() => {
       applyBackgroundAdjustment(selectedBackground, backgroundPosition, backgroundSize);
     }, 100);
     
     return () => clearTimeout(timer);
-  }, [overlaySize, iframeSize, selectedBackground, backgroundPosition, backgroundSize, applyBackgroundAdjustment]);
+  }, [overlaySize, iframeSize, selectedBackground, backgroundPosition, backgroundSize, applyBackgroundAdjustment, loadBackgroundStyleFromIframe]);
 
   // 仅显示背景图功能：当选中时，隐藏所有非背景元素，并应用背景调整（与尺寸切换时相同的逻辑）
   useEffect(() => {
@@ -973,10 +1084,14 @@ export const TemplateGenPage: React.FC = () => {
         setCssFileName(result.cssFileName || "");
         setTemplateFields(result.fields);
         
-        // 解析 ZIP 文件以获取原始路径映射（dataUrl -> 原始路径）
+        // 重置背景加载标记，允许从新模板加载背景样式
+        hasLoadedBackgroundFromTemplate.current = false;
+        
+        // 解析 ZIP 文件以获取原始路径映射（dataUrl -> 原始路径）和保存所有原始文件
         const zip = await JSZip.loadAsync(file);
         const imagePathMap = new Map<string, string>(); // dataUrl -> 原始路径
         const fontPathMap = new Map<string, string>(); // dataUrl -> 原始路径
+        const originalFiles = new Map<string, Uint8Array>(); // 路径 -> 文件内容（保存所有原始文件）
         const cssPaths: string[] = [];
         let htmlPath = result.htmlFileName || 'index.html';
         let htmlDir = '';
@@ -996,10 +1111,18 @@ export const TemplateGenPage: React.FC = () => {
           htmlDir = mainHtmlEntry.name.split('/').slice(0, -1).join('/');
         }
         
-        // 处理所有文件，建立 dataUrl 到原始路径的映射
+        // 处理所有文件，建立 dataUrl 到原始路径的映射，并保存所有原始文件的 bytes
         for (const [relativePath, entry] of Object.entries(zip.files)) {
           if (entry.dir) continue;
           const lower = relativePath.toLowerCase();
+          
+          // 保存所有原始文件的 bytes（用于后续全量写回）
+          try {
+            const fileBytes = await entry.async('uint8array');
+            originalFiles.set(entry.name, fileBytes);
+          } catch (e) {
+            console.warn(`无法读取文件 ${entry.name} 的 bytes:`, e);
+          }
           
           if (lower.endsWith('.css')) {
             cssPaths.push(entry.name);
@@ -1047,12 +1170,29 @@ export const TemplateGenPage: React.FC = () => {
         const finalCssPaths = cssPaths.length > 0 ? cssPaths : 
           (result.cssFileName ? result.cssFileName.split(', ').map(name => name.trim()) : ['style.css']);
         
+        // 关键修复：保存原始 CSS 内容（包含文件路径引用，不包含 base64）
+        const originalCssContents = new Map<string, string>();
+        for (const cssPath of finalCssPaths) {
+          const cssEntry = zip.files[cssPath];
+          if (cssEntry && !cssEntry.dir) {
+            try {
+              const cssText = await cssEntry.async('text');
+              originalCssContents.set(cssPath, cssText);
+              console.log('[TemplateGen] 保存原始 CSS 内容:', cssPath, '长度:', cssText.length);
+            } catch (e) {
+              console.warn(`无法读取原始 CSS 文件 ${cssPath}:`, e);
+            }
+          }
+        }
+        
         setOriginalZipStructure({
           htmlPath,
           cssPaths: finalCssPaths,
           htmlDir,
           imagePathMap,
           fontPathMap,
+          originalFiles, // 保存所有原始文件的 bytes
+          originalCssContents, // 保存原始 CSS 内容（文件路径引用）
         });
         // TemplateGen 不需要 JSON 数据，只关注模板结构
         // iframeSize will be adjusted automatically after iframe loads via adjustIframeSize
@@ -1085,6 +1225,9 @@ export const TemplateGenPage: React.FC = () => {
             setTemplateFields(result.fields);
             setSuccess(`HTML 模板加载成功！包含 ${result.fields.length} 个可替换字段`);
             
+            // 重置背景加载标记，允许从新模板加载背景样式
+            hasLoadedBackgroundFromTemplate.current = false;
+            
             // HTML 文件上传时，没有 ZIP 结构，使用默认结构
             setOriginalZipStructure({
               htmlPath: file.name,
@@ -1092,6 +1235,7 @@ export const TemplateGenPage: React.FC = () => {
               htmlDir: '',
               imagePathMap: new Map(), // HTML 文件上传时没有原始路径映射
               fontPathMap: new Map(), // HTML 文件上传时没有原始路径映射
+              originalFiles: new Map(), // HTML 文件上传时没有原始文件
             });
             
             // 提取背景图片
@@ -1215,6 +1359,96 @@ export const TemplateGenPage: React.FC = () => {
     }
   }, []);
 
+  // 存储所有按钮的连续触发定时器（使用 Map 来区分不同的按钮）
+  const continuousActionTimers = useRef<Map<string, { interval: NodeJS.Timeout | null; timeout: NodeJS.Timeout | null }>>(new Map());
+
+  // 组件卸载时清理所有定时器
+  useEffect(() => {
+    return () => {
+      continuousActionTimers.current.forEach((timers) => {
+        if (timers.timeout) clearTimeout(timers.timeout);
+        if (timers.interval) clearInterval(timers.interval);
+      });
+      continuousActionTimers.current.clear();
+    };
+  }, []);
+
+  // 创建按住连续触发的辅助函数
+  const createContinuousAction = useCallback((action: () => void, key: string) => {
+    const startContinuous = () => {
+      // 先停止之前的定时器（如果存在）
+      const existing = continuousActionTimers.current.get(key);
+      if (existing) {
+        if (existing.timeout) clearTimeout(existing.timeout);
+        if (existing.interval) clearInterval(existing.interval);
+      }
+      
+      // 立即执行一次
+      action();
+      
+      // 延迟后开始连续触发（缩短延迟时间，让响应更快）
+      const timeout = setTimeout(() => {
+        // 以固定间隔持续触发（加快触发频率）
+        const interval = setInterval(() => {
+          action();
+        }, 30); // 每30ms触发一次（更快）
+        
+        // 更新 Map 中的 interval
+        const current = continuousActionTimers.current.get(key);
+        if (current) {
+          current.interval = interval;
+        }
+      }, 100); // 100ms后开始连续触发（更快响应）
+      
+      // 保存定时器引用
+      continuousActionTimers.current.set(key, { timeout, interval: null });
+    };
+    
+    const stopContinuous = () => {
+      const timers = continuousActionTimers.current.get(key);
+      if (timers) {
+        if (timers.timeout) {
+          clearTimeout(timers.timeout);
+          timers.timeout = null;
+        }
+        if (timers.interval) {
+          clearInterval(timers.interval);
+          timers.interval = null;
+        }
+        continuousActionTimers.current.delete(key);
+      }
+    };
+    
+    return {
+      onMouseDown: (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        startContinuous();
+      },
+      onMouseUp: (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        stopContinuous();
+      },
+      onMouseLeave: (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        stopContinuous();
+      },
+      // 添加 touch 事件支持（移动端）
+      onTouchStart: (e: React.TouchEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        startContinuous();
+      },
+      onTouchEnd: (e: React.TouchEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        stopContinuous();
+      },
+    };
+  }, []);
+
   // 调整元素位置和缩放（复用 BannerBatchPage 的逻辑）
   const adjustElementTransform = useCallback((fieldName: string, direction: 'up' | 'down' | 'left' | 'right' | 'zoomIn' | 'zoomOut') => {
     if (!previewIframeRef.current) return;
@@ -1299,12 +1533,12 @@ export const TemplateGenPage: React.FC = () => {
     const target = e.target as HTMLElement;
     if (!target) return;
 
-    // 向上查找具有 data-field 属性的元素
+    // 向上查找具有 data-field 属性的元素（增加查找层数，提高灵敏度）
     let element: HTMLElement | null = target;
     let fieldName: string | null = null;
     
-    // 最多向上查找5层
-    for (let i = 0; i < 5 && element; i++) {
+    // 增加向上查找层数到15层，确保能找到嵌套较深的元素
+    for (let i = 0; i < 15 && element; i++) {
       fieldName = element.getAttribute('data-field');
       if (fieldName) {
         break;
@@ -1314,8 +1548,11 @@ export const TemplateGenPage: React.FC = () => {
 
     // 如果找到了 data-field，选中对应的字段
     if (fieldName) {
+      e.preventDefault(); // 阻止默认行为
       e.stopPropagation(); // 阻止事件冒泡，避免触发其他点击事件
       
+      // 使用 setTimeout 确保状态更新在下一个事件循环，避免事件冲突
+      setTimeout(() => {
       if (selectedField === fieldName) {
         // 如果点击的是已选中的字段，则取消选中
         setSelectedField(null);
@@ -1326,6 +1563,7 @@ export const TemplateGenPage: React.FC = () => {
         setSelectedField(fieldName);
         highlightElementInIframe(fieldName);
       }
+      }, 0);
     }
   }, [selectedField, highlightElementInIframe, clearAllFieldHighlights]);
 
@@ -1545,9 +1783,14 @@ export const TemplateGenPage: React.FC = () => {
       console.warn('无法添加 iframe 点击事件:', err);
     }
 
-    // 调整 iframe 尺寸
+    // 调整 iframe 尺寸（会在内部读取背景样式）
     adjustIframeSize();
-  }, [htmlContent, adjustIframeSize, handleIframeElementClick]);
+    
+    // 延迟读取背景样式，确保样式已完全应用
+    setTimeout(() => {
+      loadBackgroundStyleFromIframe();
+    }, 200);
+  }, [htmlContent, adjustIframeSize, handleIframeElementClick, loadBackgroundStyleFromIframe]);
 
   // 保存模板为 ZIP 文件
   const handleSaveTemplate = useCallback(async () => {
@@ -1568,6 +1811,218 @@ export const TemplateGenPage: React.FC = () => {
 
       const zip = new JSZip();
 
+      // 0. 先全量写入原始 ZIP 中的所有文件（保留未修改的资源）
+      // 但需要先检测是否有新生成的背景，如果有，需要跳过旧背景文件
+      let hasNewGeneratedBackground = false;
+      let newBackgroundPath: string | null = null;
+      
+      // 提前检测是否有新生成的背景（在写入文件之前）
+      const container = iframeDoc.querySelector('.container') as HTMLElement;
+      if (container) {
+        const computedStyle = iframeDoc.defaultView?.getComputedStyle(container);
+        const bgImage = computedStyle?.backgroundImage || container.style.backgroundImage;
+        if (bgImage && bgImage.includes('url(')) {
+          const bgUrlMatch = bgImage.match(/url\(["']?(data:[^"')]+)["']?\)/);
+          if (bgUrlMatch) {
+            const dataUrl = bgUrlMatch[1];
+            const originalPath = originalZipStructure?.imagePathMap.get(dataUrl);
+            if (!originalPath) {
+              // 这是新生成的背景
+              hasNewGeneratedBackground = true;
+              const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+              if (match) {
+                const mime = match[1];
+                const ext = mime.split('/')[1] || 'png';
+                const bgExt = ext === 'jpeg' || ext === 'jpg' ? 'jpg' : 'png';
+                newBackgroundPath = `image/bg.${bgExt}`;
+              }
+            }
+          }
+        }
+      }
+      
+      // 额外检查 selectedBackground
+      if (!hasNewGeneratedBackground && selectedBackground && selectedBackground.startsWith('data:')) {
+        const originalPath = originalZipStructure?.imagePathMap.get(selectedBackground);
+        if (!originalPath) {
+          hasNewGeneratedBackground = true;
+          const match = selectedBackground.match(/^data:([^;]+);base64,(.+)$/);
+          if (match) {
+            const mime = match[1];
+            const ext = mime.split('/')[1] || 'png';
+            const bgExt = ext === 'jpeg' || ext === 'jpg' ? 'jpg' : 'png';
+            newBackgroundPath = `image/bg.${bgExt}`;
+          }
+        }
+      }
+
+      // 关键修复：只保存模板中实际使用的资源，而不是所有原始文件
+      // 先收集所有在模板中使用的资源路径（从当前 HTML/CSS 中提取）
+      const usedResourcePaths = new Set<string>();
+      const usedDataUrls = new Set<string>(); // 记录所有使用的 dataURL（包括新生成的）
+      
+      // 1. 从当前 iframe 中的 HTML 提取所有使用的图片资源
+      const currentImages = iframeDoc.querySelectorAll('img[src]');
+      currentImages.forEach((img) => {
+        const src = img.getAttribute('src') || '';
+        if (src.startsWith('data:')) {
+          usedDataUrls.add(src);
+          // 如果是 data URL，查找对应的原始路径
+          const originalPath = originalZipStructure?.imagePathMap.get(src);
+          if (originalPath) {
+            usedResourcePaths.add(originalPath);
+          }
+        } else if (src && !src.startsWith('http')) {
+          // 普通相对路径，尝试匹配原始文件
+          const normalizedPath = src.replace(/^\.\//, '');
+          if (originalZipStructure?.originalFiles.has(normalizedPath)) {
+            usedResourcePaths.add(normalizedPath);
+          }
+        }
+      });
+      
+      // 2. 从当前 CSS 中提取所有使用的资源（图片和字体）
+      const currentStyleTags = iframeDoc.querySelectorAll('style');
+      const allCssText = Array.from(currentStyleTags).map(s => s.textContent || '').join('\n') + (cssContent || '');
+      
+      // 提取 CSS 中的所有 data URL（图片和字体）
+      const cssDataUrlRegex = /url\(["']?(data:[^"')]+)["']?\)/gi;
+      let cssMatch;
+      while ((cssMatch = cssDataUrlRegex.exec(allCssText)) !== null) {
+        const dataUrl = cssMatch[1];
+        usedDataUrls.add(dataUrl);
+        // 检查是图片还是字体
+        const isFont = dataUrl.includes('font') || dataUrl.includes('woff') || 
+                      dataUrl.includes('otf') || dataUrl.includes('ttf') || dataUrl.includes('eot');
+        
+        if (isFont) {
+          const originalPath = originalZipStructure?.fontPathMap.get(dataUrl);
+          if (originalPath) {
+            usedResourcePaths.add(originalPath);
+          }
+        } else {
+          const originalPath = originalZipStructure?.imagePathMap.get(dataUrl);
+          if (originalPath) {
+            usedResourcePaths.add(originalPath);
+          }
+        }
+      }
+      
+      // 3. 从内联样式中提取使用的资源（包括 background-image）
+      const allElements = iframeDoc.querySelectorAll('*');
+      allElements.forEach((el) => {
+        const htmlEl = el as HTMLElement;
+        const inlineStyle = htmlEl.getAttribute('style') || '';
+        if (inlineStyle) {
+          // 提取内联样式中的 data URL
+          const inlineDataUrlRegex = /url\(["']?(data:[^"')]+)["']?\)/gi;
+          let inlineMatch;
+          while ((inlineMatch = inlineDataUrlRegex.exec(inlineStyle)) !== null) {
+            const dataUrl = inlineMatch[1];
+            usedDataUrls.add(dataUrl);
+            const isFont = dataUrl.includes('font') || dataUrl.includes('woff') || 
+                          dataUrl.includes('otf') || dataUrl.includes('ttf') || dataUrl.includes('eot');
+            
+            if (isFont) {
+              const originalPath = originalZipStructure?.fontPathMap.get(dataUrl);
+              if (originalPath) {
+                usedResourcePaths.add(originalPath);
+              }
+            } else {
+              const originalPath = originalZipStructure?.imagePathMap.get(dataUrl);
+              if (originalPath) {
+                usedResourcePaths.add(originalPath);
+              }
+            }
+          }
+        }
+      });
+      
+      // 4. 从背景样式中提取使用的资源（container 的背景）
+      if (container) {
+        const computedStyle = iframeDoc.defaultView?.getComputedStyle(container);
+        const bgImage = computedStyle?.backgroundImage || container.style.backgroundImage;
+        if (bgImage && bgImage.includes('url(')) {
+          const bgUrlMatch = bgImage.match(/url\(["']?(data:[^"')]+)["']?\)/);
+          if (bgUrlMatch) {
+            const dataUrl = bgUrlMatch[1];
+            usedDataUrls.add(dataUrl);
+            const originalPath = originalZipStructure?.imagePathMap.get(dataUrl);
+            if (originalPath) {
+              usedResourcePaths.add(originalPath);
+            }
+          }
+        }
+      }
+      
+      // 5. 确保新生成的背景也被标记为"使用"（即使不在 imagePathMap 中）
+      if (hasNewGeneratedBackground && newBackgroundPath) {
+        // 新生成的背景会被写入 imageDataMap，不需要从 originalFiles 中查找
+        // 但我们需要确保它被包含在最终保存的文件中
+        console.log('[TemplateGen] 检测到新生成的背景，将保存到:', newBackgroundPath);
+      }
+      
+      console.log('[TemplateGen] 模板中使用的资源文件数量:', usedResourcePaths.size, Array.from(usedResourcePaths));
+      console.log('[TemplateGen] 模板中使用的 dataURL 数量:', usedDataUrls.size);
+      
+      // 保存原始 ZIP 中实际使用的资源（不包括未使用的本地素材）
+      if (originalZipStructure?.originalFiles) {
+        for (const [path, fileBytes] of originalZipStructure.originalFiles.entries()) {
+          // 跳过 HTML 和 CSS 文件，这些会在后面覆盖
+          const lower = path.toLowerCase();
+          if (lower.endsWith('.html') || lower.endsWith('.htm') || lower.endsWith('.css')) {
+            continue;
+          }
+          
+          // 关键修复：只保存模板中实际使用的资源
+          if (!usedResourcePaths.has(path)) {
+            console.log('[TemplateGen] 跳过未使用的资源文件:', path);
+            continue;
+          }
+          
+          // 关键修复：如果有新生成的背景，跳过所有可能的旧背景文件
+          // 用户保存模板时，旧背景文件应该被删除，因为新背景会覆盖它们
+          if (hasNewGeneratedBackground && newBackgroundPath) {
+            // 检查是否是背景文件（bg.jpg, bg.png 等，不区分大小写）
+            const pathLower = path.toLowerCase();
+            const fileName = pathLower.split('/').pop() || pathLower;
+            
+            // 精确匹配常见的背景文件名（在 image 目录下或根目录）
+            const isBackgroundFile = 
+              (fileName === 'bg.jpg' || fileName === 'bg.png' || fileName === 'bg.jpeg' || 
+               fileName === 'background.jpg' || fileName === 'background.png' || 
+               fileName === 'background.jpeg') &&
+              (pathLower.includes('/image/') || pathLower.startsWith('image/') || 
+               pathLower === fileName); // 也支持根目录下的背景文件
+            
+            if (isBackgroundFile) {
+              console.log('[TemplateGen] 跳过旧背景文件（将被新背景替换）:', path, '→', newBackgroundPath);
+              continue;
+            }
+          }
+          
+          // 额外检查：即使没有新生成的背景，如果当前背景是 dataURL（可能是之前生成的），
+          // 也应该删除所有旧背景文件，因为用户已经决定使用当前背景
+          if (!hasNewGeneratedBackground && selectedBackground && selectedBackground.startsWith('data:')) {
+            const pathLower = path.toLowerCase();
+            const fileName = pathLower.split('/').pop() || pathLower;
+            const isBackgroundFile = 
+              (fileName === 'bg.jpg' || fileName === 'bg.png' || fileName === 'bg.jpeg' || 
+               fileName === 'background.jpg' || fileName === 'background.png' || 
+               fileName === 'background.jpeg') &&
+              (pathLower.includes('/image/') || pathLower.startsWith('image/') || 
+               pathLower === fileName);
+            
+            if (isBackgroundFile) {
+              console.log('[TemplateGen] 跳过旧背景文件（当前使用 dataURL 背景）:', path);
+              continue;
+            }
+          }
+          
+          zip.file(path, fileBytes);
+        }
+      }
+
       // 1. 获取当前 iframe 中的 HTML（包含所有修改）
       // 获取 body 内容，但排除我们添加的高亮样式
       const body = iframeDoc.body;
@@ -1576,24 +2031,80 @@ export const TemplateGenPage: React.FC = () => {
       bodyClone.querySelectorAll('.field-highlight').forEach(el => {
         el.classList.remove('field-highlight');
       });
-      const currentHtml = bodyClone.innerHTML;
-
-      // 2. 提取 CSS（从 style 标签和原始 CSS 内容）
-      const styleTags = iframeDoc.querySelectorAll('style');
-      let extractedCss = cssContent || "";
-      styleTags.forEach((style) => {
-        const cssText = style.textContent || style.innerHTML;
-        // 排除字段高亮样式和系统添加的样式
-        if (!cssText.includes('field-highlight') && 
-            !cssText.includes('outline: 3px solid') &&
-            !cssText.includes('box-shadow: 0 0 0 2px')) {
-          extractedCss += "\n" + cssText;
+      
+      // 清理所有元素的 transform scale，只保留 translate（修复 scale 导致的缩放问题）
+      bodyClone.querySelectorAll('[style*="transform"]').forEach((el) => {
+        const htmlEl = el as HTMLElement;
+        const style = htmlEl.getAttribute('style') || '';
+        if (style.includes('transform')) {
+          // 解析 transform，提取 translate，移除 scale
+          const transformMatch = style.match(/transform\s*:\s*([^;]+)/);
+          if (transformMatch) {
+            const transformValue = transformMatch[1];
+            // 提取 translate 值
+            const translateMatch = transformValue.match(/translate\(([^)]+)\)/);
+            if (translateMatch) {
+              // 只保留 translate，移除 scale
+              const newStyle = style.replace(
+                /transform\s*:\s*[^;]+/,
+                `transform: translate(${translateMatch[1]})`
+              );
+              htmlEl.setAttribute('style', newStyle);
+            } else {
+              // 如果没有 translate，移除整个 transform
+              const newStyle = style.replace(/\s*transform\s*:\s*[^;]+;?/g, '');
+              htmlEl.setAttribute('style', newStyle.trim());
+            }
+          }
         }
       });
+      
+      const currentHtml = bodyClone.innerHTML;
+
+      // 2. 提取 CSS（关键修复：优先使用原始 CSS 内容，而不是转换后的 base64 CSS）
+      // 原始 CSS 中包含文件路径引用，不需要反向转换
+      let extractedCss = "";
+      
+      // 优先使用原始 CSS 内容（如果存在）
+      if (originalZipStructure?.originalCssContents && originalZipStructure.cssPaths.length > 0) {
+        // 合并所有原始 CSS 文件内容
+        for (const cssPath of originalZipStructure.cssPaths) {
+          const originalCss = originalZipStructure.originalCssContents.get(cssPath);
+          if (originalCss) {
+            extractedCss += (extractedCss ? "\n\n" : "") + originalCss;
+            console.log('[TemplateGen] 使用原始 CSS 内容:', cssPath, '长度:', originalCss.length);
+          }
+        }
+      }
+      
+      // 如果原始 CSS 不存在，回退到从 iframe 提取（可能包含 base64）
+      if (!extractedCss) {
+        console.warn('[TemplateGen] ⚠️ 原始 CSS 内容不存在，回退到从 iframe 提取');
+        extractedCss = cssContent || "";
+        const styleTags = iframeDoc.querySelectorAll('style');
+        styleTags.forEach((style) => {
+          const cssText = style.textContent || style.innerHTML;
+          // 排除字段高亮样式和系统添加的样式
+          if (!cssText.includes('field-highlight') && 
+              !cssText.includes('outline: 3px solid') &&
+              !cssText.includes('box-shadow: 0 0 0 2px')) {
+            extractedCss += "\n" + cssText;
+          }
+        });
+      }
 
       // 3. 提取所有资源（图片、字体等）
       const resourceMap = new Map<string, { data: string; mime: string; ext: string }>();
       let resourceIndex = 0;
+      
+      // 提前定义 imageDataMap 和 fontDataMap，用于存储所有图片和字体数据
+      const imageDataMap = new Map<string, { data: string; mime: string; ext: string }>();
+      const fontDataMap = new Map<string, { data: string; mime: string; ext: string }>();
+
+      // 提前确定 HTML 文件路径和目录结构（用于后续路径计算）
+      const finalHtmlPath = originalZipStructure?.htmlPath || htmlFileName || 'index.html';
+      const htmlDirForStructure = originalZipStructure?.htmlDir || 
+        (finalHtmlPath.includes('/') ? finalHtmlPath.split('/').slice(0, -1).join('/') : '');
 
       // 提取图片资源
       const extractImageFromDataUrl = (dataUrl: string, defaultName: string): string | null => {
@@ -1620,8 +2131,8 @@ export const TemplateGenPage: React.FC = () => {
             imageReplacements.set(src, originalPath);
           } else {
             // 如果是新添加的图片（不在原始 ZIP 中），使用默认路径
-            const fileName = extractImageFromDataUrl(src, `image`);
-            if (fileName) {
+          const fileName = extractImageFromDataUrl(src, `image`);
+          if (fileName) {
               const defaultPath = htmlDirForStructure 
                 ? `${htmlDirForStructure}/image/${fileName}`
                 : `image/${fileName}`;
@@ -1635,7 +2146,19 @@ export const TemplateGenPage: React.FC = () => {
       // 这里先不替换，等收集完所有文件后再统一替换为原始路径
       
       // 从背景样式中提取图片（如果还没有处理）
-      const container = iframeDoc.querySelector('.container') as HTMLElement;
+      // 关键修复：处理图生图生成的新背景
+      // 注意：container 已在前面定义（用于检测新背景），这里直接使用
+      let backgroundDataUrl: string | null = null;
+      let backgroundTargetPath: string | null = null; // 使用时间戳生成唯一文件名，避免缓存问题
+      
+      // 生成唯一背景文件名的辅助函数（使用时间戳）
+      const generateUniqueBackgroundPath = (ext: string): string => {
+        const timestamp = Date.now();
+        const bgExt = ext === 'jpeg' || ext === 'jpg' ? 'jpg' : 'png';
+        return `image/bg_${timestamp}.${bgExt}`;
+      };
+      
+      // container 已在前面定义，直接使用
       if (container) {
         const computedStyle = iframeDoc.defaultView?.getComputedStyle(container);
         const bgImage = computedStyle?.backgroundImage || container.style.backgroundImage;
@@ -1643,34 +2166,83 @@ export const TemplateGenPage: React.FC = () => {
           const bgUrlMatch = bgImage.match(/url\(["']?(data:[^"')]+)["']?\)/);
           if (bgUrlMatch) {
             const dataUrl = bgUrlMatch[1];
-            if (!imageReplacements.has(dataUrl)) {
-              // 背景图片已经在 imageDataMap 中处理了，这里不需要额外处理
-              // 只需要确保它被添加到 imageReplacements 以便在 HTML 中替换
-              const originalPath = originalZipStructure?.imagePathMap.get(dataUrl);
-              if (originalPath) {
-                imageReplacements.set(dataUrl, originalPath);
+            backgroundDataUrl = dataUrl;
+            
+            // 检查是否是原始 ZIP 中的背景（在 imagePathMap 中）
+            const originalPath = originalZipStructure?.imagePathMap.get(dataUrl);
+            if (originalPath) {
+              // 是原始背景，使用原始路径
+              imageReplacements.set(dataUrl, originalPath);
+              console.log('[TemplateGen] 使用原始背景路径:', originalPath);
+            } else {
+              // 是新生成的背景（图生图），需要写入 zip
+              // 关键修复：使用时间戳生成唯一文件名，避免浏览器缓存问题
+              const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+              if (match) {
+                const mime = match[1];
+                const base64 = match[2];
+                const ext = mime.split('/')[1] || 'png';
+                
+                // 使用时间戳生成唯一文件名
+                backgroundTargetPath = generateUniqueBackgroundPath(ext);
+                
+                // 更新 imageReplacements 使用唯一文件名
+                imageReplacements.set(dataUrl, backgroundTargetPath);
+                
+                // 将 base64 转换为二进制并准备写入 imageDataMap
+                const bgExt = ext === 'jpeg' || ext === 'jpg' ? 'jpg' : 'png';
+                if (!imageDataMap.has(backgroundTargetPath)) {
+                  imageDataMap.set(backgroundTargetPath, { data: base64, mime, ext: bgExt });
+                }
+                
+                console.log('[TemplateGen] 新生成的背景将保存到:', backgroundTargetPath);
               }
+            }
+          } else {
+            // 检查是否是普通 URL（非 data URL）
+            const urlMatch = bgImage.match(/url\(["']?([^"')]+)["']?\)/);
+            if (urlMatch && !urlMatch[1].startsWith('data:')) {
+              // 普通 URL，不需要处理（可能是外部链接）
+              console.log('[TemplateGen] 背景是普通 URL，跳过处理:', urlMatch[1].substring(0, 50));
             }
           }
         }
       }
+      
+      // 额外检查：如果 selectedBackground 是 dataURL 且不在 imagePathMap 中，也要处理
+      if (selectedBackground && selectedBackground.startsWith('data:') && !backgroundDataUrl) {
+        const originalPath = originalZipStructure?.imagePathMap.get(selectedBackground);
+        if (!originalPath) {
+          // 这是新生成的背景，需要写入 zip
+          backgroundDataUrl = selectedBackground;
+          const match = selectedBackground.match(/^data:([^;]+);base64,(.+)$/);
+          if (match) {
+            const mime = match[1];
+            const base64 = match[2];
+            const ext = mime.split('/')[1] || 'png';
+            
+            // 使用时间戳生成唯一文件名
+            backgroundTargetPath = generateUniqueBackgroundPath(ext);
+            
+            imageReplacements.set(selectedBackground, backgroundTargetPath);
+            const bgExt = ext === 'jpeg' || ext === 'jpg' ? 'jpg' : 'png';
+            if (!imageDataMap.has(backgroundTargetPath)) {
+              imageDataMap.set(backgroundTargetPath, { data: base64, mime, ext: bgExt });
+            }
+            
+            console.log('[TemplateGen] 新生成的背景（从 selectedBackground）将保存到:', backgroundTargetPath);
+          }
+        }
+      }
 
-      // 4. 更新 HTML 中的图片路径
-      let finalBodyHtml = iframeDoc.body.innerHTML;
-      // 移除高亮类
-      finalBodyHtml = finalBodyHtml.replace(/class="[^"]*field-highlight[^"]*"/g, '');
-      finalBodyHtml = finalBodyHtml.replace(/field-highlight/g, '');
+      // 4. 使用清理后的 currentHtml（修复：之前计算了但没用）
+      let finalBodyHtml = currentHtml;
       
       // 5. 创建目录结构并添加文件（使用原始 ZIP 结构）
-      // 确定 HTML 文件路径
-      const finalHtmlPath = originalZipStructure?.htmlPath || htmlFileName || 'index.html';
+      // HTML 文件路径和目录结构已在前面定义，这里只需要确定 CSS 文件路径
       
       // 确定 CSS 文件路径（如果有多个，合并为一个，使用第一个文件名）
       const finalCssPath = originalZipStructure?.cssPaths?.[0] || 'style.css';
-      
-      // 确定 HTML 文件所在目录（用于计算 CSS 相对路径）
-      const htmlDirForStructure = originalZipStructure?.htmlDir || 
-        (finalHtmlPath.includes('/') ? finalHtmlPath.split('/').slice(0, -1).join('/') : '');
       
       // 替换所有图片的 data URL 为原始路径（相对于 HTML 文件）
       imageReplacements.forEach((originalPath, oldDataUrl) => {
@@ -1701,35 +2273,262 @@ export const TemplateGenPage: React.FC = () => {
         }
         
         // 转义特殊字符用于正则替换
-        const escapedUrl = oldDataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        finalBodyHtml = finalBodyHtml.replace(new RegExp(escapedUrl, 'g'), imageRelativePath);
+        // 关键修复：对于超长的 dataURL，使用字符串替换而不是正则表达式
+        try {
+          if (oldDataUrl.length > 500) {
+            // 对于超长的 dataURL，使用字符串替换（更安全）
+            finalBodyHtml = finalBodyHtml.replace(new RegExp(oldDataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), imageRelativePath);
+            // 如果上面的替换失败（可能因为转义问题），尝试直接字符串替换
+            if (finalBodyHtml.includes(oldDataUrl)) {
+              finalBodyHtml = finalBodyHtml.split(oldDataUrl).join(imageRelativePath);
+            }
+          } else {
+            // 对于较短的 dataURL，可以使用正则表达式
+            const escapedUrl = oldDataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            finalBodyHtml = finalBodyHtml.replace(new RegExp(escapedUrl, 'g'), imageRelativePath);
+          }
+        } catch (e) {
+          console.warn('[TemplateGen] ⚠️ 替换 HTML 中的 dataURL 时出错:', e, 'dataURL 长度:', oldDataUrl.length);
+          // 降级方案：使用简单的字符串替换
+          finalBodyHtml = finalBodyHtml.split(oldDataUrl).join(imageRelativePath);
+        }
+        
+        // 关键修复：如果是新生成的背景，同时替换内联样式中的背景（包括 .container 的 style 属性）
+        if (backgroundTargetPath && originalPath === backgroundTargetPath && oldDataUrl === backgroundDataUrl) {
+          // 替换内联样式中的背景 data URL（使用 url(...) 格式）
+          // 注意：dataURL 可能很长，直接用于正则表达式可能导致问题，使用字符串替换更安全
+          try {
+            // 先尝试简单的字符串替换（更安全，不会因为特殊字符导致正则错误）
+            const urlPattern = `url("${oldDataUrl}")`;
+            const urlPattern2 = `url('${oldDataUrl}')`;
+            const urlPattern3 = `url(${oldDataUrl})`;
+            
+            const beforeInlineReplace = finalBodyHtml;
+            
+            // 替换各种可能的 url() 格式
+            finalBodyHtml = finalBodyHtml.replace(urlPattern, `url("${imageRelativePath}")`);
+            finalBodyHtml = finalBodyHtml.replace(urlPattern2, `url("${imageRelativePath}")`);
+            finalBodyHtml = finalBodyHtml.replace(urlPattern3, `url("${imageRelativePath}")`);
+            
+            if (beforeInlineReplace !== finalBodyHtml) {
+              console.log('[TemplateGen] ✅ 已替换内联样式中的背景路径:', imageRelativePath);
+            } else {
+              // 如果字符串替换失败，尝试使用正则表达式（但只匹配 data: 开头部分，避免完整 dataURL）
+              const dataUrlPrefix = oldDataUrl.substring(0, Math.min(100, oldDataUrl.length));
+              const escapedPrefix = dataUrlPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const inlineBgRegex = new RegExp(`url\\(["']?${escapedPrefix}[^"')]*["']?\\)`, 'gi');
+              finalBodyHtml = finalBodyHtml.replace(inlineBgRegex, `url("${imageRelativePath}")`);
+              
+              if (beforeInlineReplace !== finalBodyHtml) {
+                console.log('[TemplateGen] ✅ 已替换内联样式中的背景路径（正则匹配）:', imageRelativePath);
+              } else {
+                console.warn('[TemplateGen] ⚠️ 警告：内联样式中的背景路径替换失败，dataURL 长度:', oldDataUrl.length);
+              }
+            }
+          } catch (e) {
+            console.warn('[TemplateGen] ⚠️ 替换内联样式背景路径时出错:', e);
+            // 如果替换失败，至少确保 HTML 中的 dataURL 被替换
+          }
+        }
       });
       
       // 更新 CSS 中的图片路径为原始路径（相对于 CSS 文件）
-      // 重新遍历 CSS 中的所有 dataUrl，更新为对应的原始路径
-      const cssDataUrlRegex2 = /url\(["']?(data:[^"')]+)["']?\)/gi;
-      let cssDataUrlMatch2;
-      const cssDirForImages = finalCssPath.includes('/') 
-        ? finalCssPath.split('/').slice(0, -1).join('/')
-        : '';
+      // 关键修复：如果使用了原始 CSS（文件路径引用），只需要替换新生成的背景，不需要处理所有 dataURL
+      // 检查 extractedCss 是否包含 dataURL（如果包含，说明是从 iframe 提取的，需要转换）
+      // 如果不包含 dataURL，说明是原始 CSS，只需要替换新生成的背景
+      const hasDataUrls = /url\(["']?data:[^"')]+["']?\)/gi.test(extractedCss);
       
-      while ((cssDataUrlMatch2 = cssDataUrlRegex2.exec(extractedCss)) !== null) {
+      if (!hasDataUrls) {
+        // 原始 CSS 中没有 dataURL，说明都是文件路径引用
+        // 只需要替换新生成的背景（如果有）
+        console.log('[TemplateGen] ✅ 使用原始 CSS（文件路径引用），只需要替换新生成的背景');
+        
+        if (backgroundTargetPath && backgroundDataUrl) {
+          // 查找原始 CSS 中可能存在的旧背景路径，替换为新生成的背景路径
+          // 或者，如果原始 CSS 中没有背景路径，添加新生成的背景路径
+          const cssDirForImages = finalCssPath.includes('/') 
+            ? finalCssPath.split('/').slice(0, -1).join('/')
+            : '';
+          const imageDir = backgroundTargetPath.includes('/') 
+            ? backgroundTargetPath.split('/').slice(0, -1).join('/')
+            : '';
+          const imageFileName = backgroundTargetPath.split('/').pop() || backgroundTargetPath;
+          
+          let bgRelativePath = backgroundTargetPath;
+          if (cssDirForImages && imageDir) {
+            if (cssDirForImages === imageDir) {
+              bgRelativePath = imageFileName;
+            }
+          } else if (cssDirForImages && !imageDir) {
+            const upLevels = cssDirForImages.split('/').length;
+            bgRelativePath = '../'.repeat(upLevels) + imageFileName;
+          }
+          
+          // 查找 .container 的背景路径，替换为新生成的背景
+          const containerBgRegex = /(\.container[^}]*background[^:]*:\s*url\(["']?)([^"')]+)(["']?\))/i;
+          const containerBgMatch = extractedCss.match(containerBgRegex);
+          if (containerBgMatch) {
+            extractedCss = extractedCss.replace(containerBgRegex, `$1${bgRelativePath}$3`);
+            console.log('[TemplateGen] ✅ 已替换原始 CSS 中的背景路径为新生成的背景:', bgRelativePath);
+          } else {
+            // 如果原始 CSS 中没有 .container 背景，添加它
+            const containerRuleRegex = /\.container\s*\{/i;
+            if (containerRuleRegex.test(extractedCss)) {
+              extractedCss = extractedCss.replace(
+                containerRuleRegex,
+                `.container {\n  background-image: url("${bgRelativePath}");`
+              );
+              console.log('[TemplateGen] ✅ 已在原始 CSS 中添加新生成的背景路径:', bgRelativePath);
+            }
+          }
+        }
+      } else {
+        // CSS 中包含 dataURL，需要转换（从 iframe 提取的情况）
+        console.log('[TemplateGen] ⚠️ CSS 中包含 dataURL，需要转换为文件路径');
+        
+        // 重新遍历 CSS 中的所有 dataUrl，更新为对应的原始路径
+        const cssDataUrlRegex2 = /url\(["']?(data:[^"')]+)["']?\)/gi;
+        let cssDataUrlMatch2;
+        const cssDirForImages = finalCssPath.includes('/') 
+          ? finalCssPath.split('/').slice(0, -1).join('/')
+          : '';
+        
+        // 重置正则表达式（因为 exec 会修改 lastIndex）
+        cssDataUrlRegex2.lastIndex = 0;
+        while ((cssDataUrlMatch2 = cssDataUrlRegex2.exec(extractedCss)) !== null) {
         const fullMatch = cssDataUrlMatch2[0];
         const dataUrl = cssDataUrlMatch2[1];
         const isFont = dataUrl.includes('font') || dataUrl.includes('woff') || 
                       dataUrl.includes('otf') || dataUrl.includes('ttf') || dataUrl.includes('eot');
         
-        if (!isFont) {
+        if (isFont) {
+          // 字体：查找对应的原始路径
+          let originalPath = originalZipStructure?.fontPathMap.get(dataUrl);
+          
+          // 如果不在原始映射中，说明这是原始 CSS 中的 base64，需要提取并保存为文件
+          if (!originalPath) {
+            const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+            if (match) {
+              const mime = match[1];
+              const base64 = match[2];
+              let ext = 'ttf';
+              if (mime.includes('woff2')) ext = 'woff2';
+              else if (mime.includes('woff')) ext = 'woff';
+              else if (mime.includes('otf')) ext = 'otf';
+              else if (mime.includes('eot')) ext = 'eot';
+              
+              // 生成唯一文件名（使用时间戳和随机数，避免冲突）
+              const timestamp = Date.now();
+              const random = Math.floor(Math.random() * 10000);
+              const fileName = `fonts/css_font_${timestamp}_${random}.${ext}`;
+              const targetPath = htmlDirForStructure 
+                ? `${htmlDirForStructure}/${fileName}`
+                : fileName;
+              
+              // 将字体数据保存到 fontDataMap（fontDataMap 已在前面定义）
+              if (!fontDataMap.has(targetPath)) {
+                fontDataMap.set(targetPath, { data: base64, mime, ext });
+              }
+              originalPath = targetPath;
+              
+              console.log('[TemplateGen] ✅ 发现 CSS 中的 base64 字体，已提取并保存为文件:', targetPath);
+            } else {
+              console.warn('[TemplateGen] ⚠️ 无法解析字体 dataURL，跳过:', dataUrl.substring(0, 50) + '...');
+              continue;
+            }
+          }
+          
+          // 计算字体路径相对于 CSS 文件的路径
+          const fontDir = originalPath.includes('/') 
+            ? originalPath.split('/').slice(0, -1).join('/')
+            : '';
+          const fontFileName = originalPath.split('/').pop() || originalPath;
+          
+          let fontRelativePath = originalPath;
+          if (cssDirForImages && fontDir) {
+            if (cssDirForImages === fontDir) {
+              fontRelativePath = fontFileName;
+            }
+          } else if (cssDirForImages && !fontDir) {
+            const upLevels = cssDirForImages.split('/').length;
+            fontRelativePath = '../'.repeat(upLevels) + fontFileName;
+          }
+          
+          // 更新 CSS 中的字体路径
+          const beforeReplace = extractedCss;
+          
+          try {
+            // 先尝试简单的字符串替换（更安全）
+            if (dataUrl.length > 500) {
+              const urlPattern1 = `url("${dataUrl}")`;
+              const urlPattern2 = `url('${dataUrl}')`;
+              const urlPattern3 = `url(${dataUrl})`;
+              
+              extractedCss = extractedCss.replace(urlPattern1, `url("${fontRelativePath}")`);
+              extractedCss = extractedCss.replace(urlPattern2, `url("${fontRelativePath}")`);
+              extractedCss = extractedCss.replace(urlPattern3, `url("${fontRelativePath}")`);
+            } else {
+              const escapedUrl = dataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              extractedCss = extractedCss.replace(
+                new RegExp(escapedUrl, 'g'),
+                fontRelativePath
+              );
+            }
+            
+            if (beforeReplace !== extractedCss) {
+              console.log('[TemplateGen] ✅ 已替换 CSS 中的字体 dataURL，替换为:', fontRelativePath);
+            }
+          } catch (e) {
+            console.warn('[TemplateGen] ⚠️ 替换 CSS 中的字体 dataURL 时出错:', e, 'dataURL 长度:', dataUrl.length);
+            // 降级方案：使用字符串替换
+            const urlPattern1 = `url("${dataUrl}")`;
+            const urlPattern2 = `url('${dataUrl}')`;
+            extractedCss = extractedCss.replace(urlPattern1, `url("${fontRelativePath}")`);
+            extractedCss = extractedCss.replace(urlPattern2, `url("${fontRelativePath}")`);
+          }
+        } else if (!isFont) {
           // 图片：查找对应的原始路径
           let originalPath = originalZipStructure?.imagePathMap.get(dataUrl);
+          
+          // 如果不在原始映射中，检查是否是生成的背景
           if (!originalPath) {
-            // 新添加的图片，从 imageDataMap 中查找
-            for (const [path, resource] of imageDataMap.entries()) {
-              // 通过比较 dataUrl 来确定（需要重新构建 dataUrl）
-              // 简化：直接使用 imageDataMap 中的路径
+            // 检查是否是背景图片（通过 imageReplacements）
+            if (imageReplacements.has(dataUrl)) {
+              originalPath = imageReplacements.get(dataUrl)!;
+            } else {
+              // 关键修复：如果 dataURL 不在任何映射中，说明这是原始 CSS 中的 base64
+              // 我们需要提取这个 dataURL，保存为文件，然后替换为文件路径
+              const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+              if (match) {
+                const mime = match[1];
+                const base64 = match[2];
+                const ext = mime.split('/')[1] || 'png';
+                const bgExt = ext === 'jpeg' || ext === 'jpg' ? 'jpg' : ext;
+                
+                // 生成唯一文件名（使用时间戳和随机数，避免冲突）
+                const timestamp = Date.now();
+                const random = Math.floor(Math.random() * 10000);
+                const fileName = `image/css_bg_${timestamp}_${random}.${bgExt}`;
+                const targetPath = htmlDirForStructure 
+                  ? `${htmlDirForStructure}/${fileName}`
+                  : fileName;
+                
+                // 保存到 imageDataMap
+                if (!imageDataMap.has(targetPath)) {
+                  imageDataMap.set(targetPath, { data: base64, mime, ext: bgExt });
+                }
+                
+                // 添加到 imageReplacements，以便后续替换
+                imageReplacements.set(dataUrl, targetPath);
+                originalPath = targetPath;
+                
+                console.log('[TemplateGen] ✅ 发现 CSS 中的 base64 dataURL，已提取并保存为文件:', targetPath);
+              } else {
+                // 如果无法解析 dataURL，跳过
+                console.warn('[TemplateGen] ⚠️ 无法解析 CSS 中的 dataURL，跳过:', dataUrl.substring(0, 50) + '...');
+                continue;
+              }
             }
-            // 如果找不到，跳过（可能是其他类型的资源）
-            continue;
           }
           
           // 计算图片路径相对于 CSS 文件的路径
@@ -1749,11 +2548,101 @@ export const TemplateGenPage: React.FC = () => {
           }
           
           // 更新 CSS 中的图片路径
-          const escapedUrl = dataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          extractedCss = extractedCss.replace(
-            new RegExp(escapedUrl, 'g'),
-            imageRelativePath
-          );
+          // 关键修复：对于超长的 dataURL，使用字符串替换而不是正则表达式
+          const beforeReplace = extractedCss;
+          
+          try {
+            // 先尝试简单的字符串替换（更安全，不会因为特殊字符导致正则错误）
+            if (dataUrl.length > 500) {
+              // 对于超长的 dataURL，使用字符串替换
+              const urlPattern1 = `url("${dataUrl}")`;
+              const urlPattern2 = `url('${dataUrl}')`;
+              const urlPattern3 = `url(${dataUrl})`;
+              
+              extractedCss = extractedCss.replace(urlPattern1, `url("${imageRelativePath}")`);
+              extractedCss = extractedCss.replace(urlPattern2, `url("${imageRelativePath}")`);
+              extractedCss = extractedCss.replace(urlPattern3, `url("${imageRelativePath}")`);
+            } else {
+              // 对于较短的 dataURL，可以使用正则表达式
+              const escapedUrl = dataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              extractedCss = extractedCss.replace(
+                new RegExp(escapedUrl, 'g'),
+                imageRelativePath
+              );
+            }
+          } catch (e) {
+            console.warn('[TemplateGen] ⚠️ 替换 CSS 中的 dataURL 时出错:', e, 'dataURL 长度:', dataUrl.length);
+            // 如果替换失败，尝试使用字符串替换作为降级方案
+            const urlPattern1 = `url("${dataUrl}")`;
+            const urlPattern2 = `url('${dataUrl}')`;
+            extractedCss = extractedCss.replace(urlPattern1, `url("${imageRelativePath}")`);
+            extractedCss = extractedCss.replace(urlPattern2, `url("${imageRelativePath}")`);
+          }
+          
+          // 调试日志：如果是背景文件，记录替换信息
+          if (originalPath && (originalPath.includes('bg_') || originalPath.includes('bg.') || originalPath.includes('background.'))) {
+            console.log('[TemplateGen] CSS 背景路径替换:', {
+              dataUrl: dataUrl.substring(0, 50) + '...',
+              originalPath,
+              imageRelativePath,
+              replaced: beforeReplace !== extractedCss
+            });
+          }
+          
+          // 关键修复：如果是新生成的背景，确保 CSS 中的路径与实际文件名一致
+          if (backgroundTargetPath && originalPath === backgroundTargetPath) {
+            console.log('[TemplateGen] ✅ 验证：CSS 中的背景路径已更新为:', imageRelativePath, '实际文件:', backgroundTargetPath);
+            
+            // 额外验证：确保替换确实发生了
+            if (beforeReplace === extractedCss) {
+              console.warn('[TemplateGen] ⚠️ 警告：CSS 背景路径替换可能失败，检查正则表达式');
+            }
+          }
+          
+          // 关键修复：如果 dataURL 匹配新生成的背景，但 originalPath 还没设置，也要处理
+          if (backgroundDataUrl && dataUrl === backgroundDataUrl && backgroundTargetPath) {
+            // 确保这个 dataURL 也被替换为正确的路径
+            if (!originalPath || originalPath !== backgroundTargetPath) {
+              // 重新计算相对路径
+              const imageDir = backgroundTargetPath.includes('/') 
+                ? backgroundTargetPath.split('/').slice(0, -1).join('/')
+                : '';
+              const imageFileName = backgroundTargetPath.split('/').pop() || backgroundTargetPath;
+              
+              let bgRelativePath = backgroundTargetPath;
+              if (cssDirForImages && imageDir) {
+                if (cssDirForImages === imageDir) {
+                  bgRelativePath = imageFileName;
+                }
+              } else if (cssDirForImages && !imageDir) {
+                const upLevels = cssDirForImages.split('/').length;
+                bgRelativePath = '../'.repeat(upLevels) + imageFileName;
+              }
+              
+              // 再次替换，确保新生成的背景路径被正确替换
+              // 使用字符串替换而不是正则表达式（更安全）
+              try {
+                if (dataUrl.length > 500) {
+                  const urlPattern1 = `url("${dataUrl}")`;
+                  const urlPattern2 = `url('${dataUrl}')`;
+                  const urlPattern3 = `url(${dataUrl})`;
+                  extractedCss = extractedCss.replace(urlPattern1, `url("${bgRelativePath}")`);
+                  extractedCss = extractedCss.replace(urlPattern2, `url("${bgRelativePath}")`);
+                  extractedCss = extractedCss.replace(urlPattern3, `url("${bgRelativePath}")`);
+                } else {
+                  const escapedDataUrl = dataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                  extractedCss = extractedCss.replace(
+                    new RegExp(`url\\(["']?${escapedDataUrl}["']?\\)`, 'gi'),
+                    `url("${bgRelativePath}")`
+                  );
+                }
+                console.log('[TemplateGen] ✅ 强制替换 CSS 中新生成的背景路径:', bgRelativePath);
+              } catch (e) {
+                console.warn('[TemplateGen] ⚠️ 强制替换背景路径时出错:', e);
+              }
+            }
+          }
+        }
         }
       }
       
@@ -1777,6 +2666,50 @@ export const TemplateGenPage: React.FC = () => {
         }
       }
       
+      // 关键修复：最终清理 HTML - 确保 HTML 中没有任何 dataURL 残留（所有都应该被替换为文件路径）
+      // 查找 HTML 中所有剩余的 dataURL（可能在属性、内联样式等地方）
+      const htmlDataUrlRegex = /data:[^"'\s<>]+/gi;
+      const htmlDataUrlMatches = finalBodyHtml.match(htmlDataUrlRegex);
+      if (htmlDataUrlMatches && htmlDataUrlMatches.length > 0) {
+        const uniqueDataUrls = new Set(htmlDataUrlMatches);
+        console.warn('[TemplateGen] ⚠️ 警告：HTML 中仍有', uniqueDataUrls.size, '个 dataURL 未被替换为文件路径');
+        
+        uniqueDataUrls.forEach((dataUrl) => {
+          // 检查这个 dataURL 是否在 imageReplacements 中
+          if (imageReplacements.has(dataUrl)) {
+            const targetPath = imageReplacements.get(dataUrl)!;
+            // 计算相对路径
+            const htmlDirForImages = htmlDirForStructure || '';
+            const imageDir = targetPath.includes('/') 
+              ? targetPath.split('/').slice(0, -1).join('/')
+              : '';
+            const imageFileName = targetPath.split('/').pop() || targetPath;
+            
+            let relativePath = targetPath;
+            if (htmlDirForImages && imageDir) {
+              if (htmlDirForImages === imageDir) {
+                relativePath = imageFileName;
+              }
+            } else if (htmlDirForImages && !imageDir) {
+              const upLevels = htmlDirForImages.split('/').length;
+              relativePath = '../'.repeat(upLevels) + imageFileName;
+            }
+            
+            // 替换这个 dataURL（使用字符串替换，更安全）
+            try {
+              finalBodyHtml = finalBodyHtml.split(dataUrl).join(relativePath);
+              console.log('[TemplateGen] ✅ 已清理 HTML 中的 dataURL，替换为:', relativePath);
+            } catch (e) {
+              console.warn('[TemplateGen] ⚠️ 清理 HTML 中的 dataURL 时出错:', e);
+            }
+          } else {
+            console.warn('[TemplateGen] ⚠️ 发现未映射的 dataURL，无法替换:', dataUrl.substring(0, 50) + '...');
+          }
+        });
+      } else {
+        console.log('[TemplateGen] ✅ 验证通过：最终 HTML 中没有任何 dataURL，所有路径都已替换为文件路径');
+      }
+      
       // 创建 HTML 文件
       const finalHtml = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1789,21 +2722,270 @@ export const TemplateGenPage: React.FC = () => {
     ${finalBodyHtml}
   </body>
 </html>`;
+      
+      // 最终验证：确保 HTML 中没有任何 dataURL
+      const finalHtmlDataUrlCheck = /data:[^"'\s<>]+/gi;
+      const finalHtmlDataUrlMatches = finalHtml.match(finalHtmlDataUrlCheck);
+      if (finalHtmlDataUrlMatches && finalHtmlDataUrlMatches.length > 0) {
+        console.error('[TemplateGen] ❌ 严重错误：最终 HTML 中仍有', finalHtmlDataUrlMatches.length, '个 dataURL 未被替换！');
+        console.error('[TemplateGen] ❌ 这些 dataURL 会被保存到 HTML 文件中，导致加载时显示旧资源！');
+      }
+      
       zip.file(finalHtmlPath, finalHtml);
 
       // CSS 文件（使用原始路径）
-      const finalCss = extractedCss.trim();
+      let finalCss = extractedCss.trim();
       if (finalCss) {
+        // 关键修复：最终清理 - 确保 CSS 中没有任何 dataURL 残留（所有都应该被替换为文件路径）
+        // 查找所有剩余的 dataURL（可能因为各种原因没有被替换）
+        const remainingDataUrlRegex = /url\(["']?(data:[^"')]+)["']?\)/gi;
+        let remainingDataUrlMatch;
+        const remainingDataUrls = new Set<string>();
+        
+        while ((remainingDataUrlMatch = remainingDataUrlRegex.exec(finalCss)) !== null) {
+          const dataUrl = remainingDataUrlMatch[1];
+          remainingDataUrls.add(dataUrl);
+        }
+        
+        if (remainingDataUrls.size > 0) {
+          console.warn('[TemplateGen] ⚠️ 警告：CSS 中仍有', remainingDataUrls.size, '个 dataURL 未被替换为文件路径');
+          
+          // 尝试替换所有剩余的 dataURL
+          remainingDataUrls.forEach((dataUrl) => {
+            // 检查这个 dataURL 是否在 imageReplacements 中
+            if (imageReplacements.has(dataUrl)) {
+              const targetPath = imageReplacements.get(dataUrl)!;
+              // 计算相对路径
+              const cssDirForImages = finalCssPath.includes('/') 
+                ? finalCssPath.split('/').slice(0, -1).join('/')
+                : '';
+              const imageDir = targetPath.includes('/') 
+                ? targetPath.split('/').slice(0, -1).join('/')
+                : '';
+              const imageFileName = targetPath.split('/').pop() || targetPath;
+              
+              let relativePath = targetPath;
+              if (cssDirForImages && imageDir) {
+                if (cssDirForImages === imageDir) {
+                  relativePath = imageFileName;
+                }
+              } else if (cssDirForImages && !imageDir) {
+                const upLevels = cssDirForImages.split('/').length;
+                relativePath = '../'.repeat(upLevels) + imageFileName;
+              }
+              
+              // 替换这个 dataURL
+              try {
+                if (dataUrl.length > 500) {
+                  const urlPattern1 = `url("${dataUrl}")`;
+                  const urlPattern2 = `url('${dataUrl}')`;
+                  const urlPattern3 = `url(${dataUrl})`;
+                  finalCss = finalCss.replace(urlPattern1, `url("${relativePath}")`);
+                  finalCss = finalCss.replace(urlPattern2, `url("${relativePath}")`);
+                  finalCss = finalCss.replace(urlPattern3, `url("${relativePath}")`);
+                } else {
+                  const escapedUrl = dataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                  finalCss = finalCss.replace(
+                    new RegExp(`url\\(["']?${escapedUrl}["']?\\)`, 'gi'),
+                    `url("${relativePath}")`
+                  );
+                }
+                console.log('[TemplateGen] ✅ 已清理 CSS 中的 dataURL，替换为:', relativePath);
+              } catch (e) {
+                console.warn('[TemplateGen] ⚠️ 清理 dataURL 时出错:', e);
+              }
+            } else {
+              // 关键修复：如果 dataURL 不在 imageReplacements 中，说明这是原始 CSS 中的 base64
+              // 我们需要提取这个 dataURL，保存为文件，然后替换为文件路径
+              console.warn('[TemplateGen] ⚠️ 发现未映射的 dataURL，尝试提取并保存为文件:', dataUrl.substring(0, 50) + '...');
+              
+              const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+              if (match) {
+                const mime = match[1];
+                const base64 = match[2];
+                const ext = mime.split('/')[1] || 'png';
+                const bgExt = ext === 'jpeg' || ext === 'jpg' ? 'jpg' : ext;
+                
+                // 生成唯一文件名
+                const timestamp = Date.now();
+                const random = Math.floor(Math.random() * 10000);
+                const fileName = `image/css_bg_${timestamp}_${random}.${bgExt}`;
+                const targetPath = htmlDirForStructure 
+                  ? `${htmlDirForStructure}/${fileName}`
+                  : fileName;
+                
+                // 保存到 imageDataMap
+                if (!imageDataMap.has(targetPath)) {
+                  imageDataMap.set(targetPath, { data: base64, mime, ext: bgExt });
+                }
+                
+                // 添加到 imageReplacements
+                imageReplacements.set(dataUrl, targetPath);
+                
+                // 计算相对路径
+                const cssDirForImages = finalCssPath.includes('/') 
+                  ? finalCssPath.split('/').slice(0, -1).join('/')
+                  : '';
+                const imageDir = targetPath.includes('/') 
+                  ? targetPath.split('/').slice(0, -1).join('/')
+                  : '';
+                const imageFileName = targetPath.split('/').pop() || targetPath;
+                
+                let relativePath = targetPath;
+                if (cssDirForImages && imageDir) {
+                  if (cssDirForImages === imageDir) {
+                    relativePath = imageFileName;
+                  }
+                } else if (cssDirForImages && !imageDir) {
+                  const upLevels = cssDirForImages.split('/').length;
+                  relativePath = '../'.repeat(upLevels) + imageFileName;
+                }
+                
+                // 替换这个 dataURL
+                try {
+                  if (dataUrl.length > 500) {
+                    const urlPattern1 = `url("${dataUrl}")`;
+                    const urlPattern2 = `url('${dataUrl}')`;
+                    const urlPattern3 = `url(${dataUrl})`;
+                    finalCss = finalCss.replace(urlPattern1, `url("${relativePath}")`);
+                    finalCss = finalCss.replace(urlPattern2, `url("${relativePath}")`);
+                    finalCss = finalCss.replace(urlPattern3, `url("${relativePath}")`);
+                  } else {
+                    const escapedUrl = dataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    finalCss = finalCss.replace(
+                      new RegExp(`url\\(["']?${escapedUrl}["']?\\)`, 'gi'),
+                      `url("${relativePath}")`
+                    );
+                  }
+                  console.log('[TemplateGen] ✅ 已提取并替换 CSS 中的 base64 dataURL，保存为文件:', relativePath);
+                } catch (e) {
+                  console.warn('[TemplateGen] ⚠️ 替换提取的 dataURL 时出错:', e);
+                }
+              } else {
+                console.warn('[TemplateGen] ⚠️ 无法解析 dataURL 格式，跳过:', dataUrl.substring(0, 50) + '...');
+              }
+            }
+          });
+        }
+        
+        // 最终验证：确保 CSS 中没有任何 dataURL（所有都应该被替换为文件路径）
+        const finalDataUrlCheck = /url\(["']?(data:[^"')]+)["']?\)/gi;
+        const finalDataUrlMatches = finalCss.match(finalDataUrlCheck);
+        if (finalDataUrlMatches && finalDataUrlMatches.length > 0) {
+          console.error('[TemplateGen] ❌ 严重错误：最终 CSS 中仍有', finalDataUrlMatches.length, '个 dataURL 未被替换！');
+          console.error('[TemplateGen] ❌ 这些 dataURL 会被保存到 CSS 文件中，导致加载时显示旧背景！');
+          finalDataUrlMatches.forEach((match, index) => {
+            const dataUrlMatch = match.match(/data:[^"')]+/);
+            if (dataUrlMatch) {
+              console.error(`[TemplateGen] ❌ dataURL ${index + 1}:`, dataUrlMatch[0].substring(0, 100) + '...');
+            }
+          });
+        } else {
+          console.log('[TemplateGen] ✅ 验证通过：最终 CSS 中没有任何 dataURL，所有路径都已替换为文件路径');
+        }
+        
+        // 调试日志：检查 CSS 中的背景路径
+        const bgPathMatch = finalCss.match(/\.container[^}]*background[^:]*:\s*url\(["']?([^"')]+)["']?\)/i);
+        if (bgPathMatch) {
+          const bgPath = bgPathMatch[1];
+          console.log('[TemplateGen] ✅ 保存的 CSS 中背景路径:', bgPath);
+          
+          // 验证：背景路径不应该是 dataURL
+          if (bgPath.startsWith('data:')) {
+            console.error('[TemplateGen] ❌ 错误：CSS 中的背景路径仍然是 dataURL！这会导致加载时显示旧背景！');
+            console.error('[TemplateGen] ❌ 背景 dataURL 长度:', bgPath.length);
+            console.error('[TemplateGen] ❌ 背景 dataURL 前100字符:', bgPath.substring(0, 100));
+          } else {
+            console.log('[TemplateGen] ✅ 背景路径是文件路径（不是 dataURL）:', bgPath);
+          }
+        } else {
+          console.warn('[TemplateGen] ⚠️ 警告：未在 CSS 中找到 .container 的背景路径');
+        }
+        
+        // 验证：如果生成了新背景，确保 CSS 中引用的路径与实际文件名一致
+        if (backgroundTargetPath) {
+          const bgFileName = backgroundTargetPath.split('/').pop() || backgroundTargetPath;
+          const bgPathInCss = finalCss.match(new RegExp(`url\\(["']?[^"')]*${bgFileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^"')]*["']?\\)`, 'i'));
+          
+          if (bgPathInCss) {
+            console.log('[TemplateGen] ✅ 验证通过：CSS 中包含新背景文件名:', bgFileName, '完整路径:', bgPathInCss[0]);
+          } else {
+            console.warn('[TemplateGen] ⚠️ 警告：CSS 中未找到新背景文件名:', bgFileName, '实际保存的文件:', backgroundTargetPath);
+            
+            // 如果 CSS 中确实没有新背景文件名，尝试最后一次强制替换
+            if (backgroundDataUrl) {
+              // 计算背景文件相对于 CSS 的路径
+              const cssDirForImages = finalCssPath.includes('/') 
+                ? finalCssPath.split('/').slice(0, -1).join('/')
+                : '';
+              const imageDir = backgroundTargetPath.includes('/') 
+                ? backgroundTargetPath.split('/').slice(0, -1).join('/')
+                : '';
+              const imageFileName = backgroundTargetPath.split('/').pop() || backgroundTargetPath;
+              
+              let bgRelativePath = backgroundTargetPath;
+              if (cssDirForImages && imageDir) {
+                if (cssDirForImages === imageDir) {
+                  bgRelativePath = imageFileName;
+                }
+              } else if (cssDirForImages && !imageDir) {
+                const upLevels = cssDirForImages.split('/').length;
+                bgRelativePath = '../'.repeat(upLevels) + imageFileName;
+              }
+              
+              const finalCssBeforeForce = finalCss;
+              
+              // 关键修复：对于超长的 dataURL，使用字符串替换而不是正则表达式
+              // 先尝试简单的字符串替换（更安全）
+              try {
+                const urlPattern1 = `url("${backgroundDataUrl}")`;
+                const urlPattern2 = `url('${backgroundDataUrl}')`;
+                const urlPattern3 = `url(${backgroundDataUrl})`;
+                
+                finalCss = finalCss.replace(urlPattern1, `url("${bgRelativePath}")`);
+                finalCss = finalCss.replace(urlPattern2, `url("${bgRelativePath}")`);
+                finalCss = finalCss.replace(urlPattern3, `url("${bgRelativePath}")`);
+                
+                // 如果字符串替换失败，尝试使用正则表达式（但只匹配前缀，避免超长正则）
+                if (finalCssBeforeForce === finalCss && backgroundDataUrl.length > 100) {
+                  // 只匹配 dataURL 的前缀部分（前 50 个字符），避免超长正则表达式
+                  const dataUrlPrefix = backgroundDataUrl.substring(0, 50);
+                  const escapedPrefix = dataUrlPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                  finalCss = finalCss.replace(
+                    new RegExp(`url\\(["']?${escapedPrefix}[^"')]*["']?\\)`, 'gi'),
+                    `url("${bgRelativePath}")`
+                  );
+                } else if (finalCssBeforeForce === finalCss) {
+                  // 如果 dataURL 不太长，可以尝试完整转义
+                  const escapedDataUrl = backgroundDataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                  finalCss = finalCss.replace(
+                    new RegExp(`url\\(["']?${escapedDataUrl}["']?\\)`, 'gi'),
+                    `url("${bgRelativePath}")`
+                  );
+                }
+              } catch (e) {
+                console.warn('[TemplateGen] ⚠️ 强制替换 CSS 背景路径时出错:', e);
+                // 如果替换失败，至少记录警告
+              }
+              
+              if (finalCssBeforeForce !== finalCss) {
+                console.log('[TemplateGen] ✅ 强制替换成功：CSS 中的背景路径已更新为:', bgRelativePath);
+              } else {
+                console.warn('[TemplateGen] ⚠️ 强制替换失败，可能 CSS 中已经没有该 dataURL');
+              }
+            }
+          }
+        }
+        
         zip.file(finalCssPath, finalCss);
       }
 
       // 资源文件（图片、字体等）
       // 使用原始路径映射将文件保存回原始位置
-      const imageDataMap = new Map<string, { data: string; mime: string; ext: string }>();
-      const fontDataMap = new Map<string, { data: string; mime: string; ext: string }>();
+      // imageDataMap 和 fontDataMap 已在前面定义，这里只需要收集额外的字体数据
       
       // 收集所有图片和字体的 dataUrl 和二进制数据
-      resourceMap.forEach((resource, fileName) => {
+          resourceMap.forEach((resource, fileName) => {
         // fileName 是临时生成的，我们需要找到对应的 dataUrl
         // 通过遍历 imageReplacements 和 CSS 中的 dataUrl 来匹配
       });
@@ -1826,10 +3008,11 @@ export const TemplateGenPage: React.FC = () => {
       });
       
       // 从 CSS 中提取图片和字体的 dataUrl 和原始路径
-      const cssDataUrlRegex = /url\(["']?(data:[^"')]+)["']?\)/gi;
+      // 注意：cssDataUrlRegex 已在前面声明，这里直接使用正则表达式
+      const cssDataUrlRegexForSave = /url\(["']?(data:[^"')]+)["']?\)/gi;
       let cssDataUrlMatch;
       let newResourceIndex = 0; // 用于新添加的资源
-      while ((cssDataUrlMatch = cssDataUrlRegex.exec(extractedCss)) !== null) {
+      while ((cssDataUrlMatch = cssDataUrlRegexForSave.exec(extractedCss)) !== null) {
         const dataUrl = cssDataUrlMatch[1];
         // 检查是图片还是字体
         const isFont = dataUrl.includes('font') || dataUrl.includes('woff') || 
@@ -1903,13 +3086,14 @@ export const TemplateGenPage: React.FC = () => {
       });
       
       // 保存图片文件到原始路径
+      // 关键修复：确保生成的背景文件被写入 zip（覆盖原背景）
       imageDataMap.forEach((resource, originalPath) => {
-        try {
-          const binaryString = atob(resource.data);
-          const bytes = new Uint8Array(binaryString.length);
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-          }
+            try {
+              const binaryString = atob(resource.data);
+              const bytes = new Uint8Array(binaryString.length);
+              for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+              }
           // 确保目录存在
           const pathParts = originalPath.split('/');
           if (pathParts.length > 1) {
@@ -1918,9 +3102,20 @@ export const TemplateGenPage: React.FC = () => {
             const folder = zip.folder(dirPath);
             if (folder) {
               folder.file(fileName, bytes);
+              // 如果是背景文件，记录日志
+              if (originalPath.includes('bg_') || originalPath.startsWith('image/bg.')) {
+                console.log('[TemplateGen] ✅ 已写入生成的背景文件到 zip:', originalPath, `(${bytes.length} bytes)`);
+                if (backgroundTargetPath && originalPath === backgroundTargetPath) {
+                  console.log('[TemplateGen] ✅ 验证：新背景文件已成功写入，文件名:', fileName);
+                }
+              }
             }
           } else {
             zip.file(originalPath, bytes);
+            // 如果是背景文件，记录日志
+            if (originalPath.startsWith('image/bg.')) {
+              console.log('[TemplateGen] 已写入生成的背景文件到 zip:', originalPath, `(${bytes.length} bytes)`);
+            }
           }
         } catch (e) {
           console.warn(`无法保存图片文件 ${originalPath}:`, e);
@@ -1931,10 +3126,10 @@ export const TemplateGenPage: React.FC = () => {
       fontDataMap.forEach((resource, originalPath) => {
         try {
           const binaryString = atob(resource.data);
-          const bytes = new Uint8Array(binaryString.length);
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-          }
+              const bytes = new Uint8Array(binaryString.length);
+              for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+              }
           // 确保目录存在
           const pathParts = originalPath.split('/');
           if (pathParts.length > 1) {
@@ -1947,7 +3142,7 @@ export const TemplateGenPage: React.FC = () => {
           } else {
             zip.file(originalPath, bytes);
           }
-        } catch (e) {
+            } catch (e) {
           console.warn(`无法保存字体文件 ${originalPath}:`, e);
         }
       });
@@ -2079,7 +3274,8 @@ export const TemplateGenPage: React.FC = () => {
                 </label>
               </div>
               <div className="image-gen-input-wrapper">
-                <label className="image-gen-label">文生图提示词：</label>
+                <label className="image-gen-label">现有背景图片修改提示词：</label>
+                <div className="image-gen-input-row">
                 <textarea
                   className="image-gen-textarea"
                   value={imageGenPrompt}
@@ -2088,30 +3284,21 @@ export const TemplateGenPage: React.FC = () => {
                   rows={3}
                   disabled={isGenerating}
                 />
+                  <button
+                    className="image-gen-button"
+                    onClick={handleImageGeneration}
+                    disabled={isGenerating || !imageGenPrompt.trim()}
+                    title={!imageGenPrompt.trim() ? '请输入提示词' : selectedBackground ? '基于当前显示的背景图生成新背景' : '纯文生图，创建新背景'}
+                  >
+                    {isGenerating ? '生成中...' : '生成新背景'}
+                  </button>
+                </div>
               </div>
               {generationError && (
                 <div className="image-gen-error" style={{ color: 'red', marginTop: '8px', fontSize: '12px' }}>
                   {generationError}
                 </div>
               )}
-              <button
-                className="image-gen-button"
-                onClick={handleImageGeneration}
-                disabled={isGenerating || !imageGenPrompt.trim()}
-                style={{
-                  marginTop: '12px',
-                  padding: '8px 16px',
-                  backgroundColor: isGenerating || !imageGenPrompt.trim() ? '#ccc' : '#007bff',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: isGenerating || !imageGenPrompt.trim() ? 'not-allowed' : 'pointer',
-                  width: '100%',
-                }}
-                title={!imageGenPrompt.trim() ? '请输入提示词' : selectedBackground ? '基于当前显示的背景图生成新背景' : '纯文生图，创建新背景'}
-              >
-                {isGenerating ? '生成中...' : '背景选择'}
-              </button>
               
               {/* 图片选择区域：显示原始背景图和新生成的图片 */}
               {(originalBackgroundBeforeGen || backgrounds.length > 0) && (() => {
@@ -2150,7 +3337,7 @@ export const TemplateGenPage: React.FC = () => {
                           onClick={() => {
                             setSelectedBackground(templateBackground);
                           }}
-                          style={{
+                style={{
                             position: 'relative',
                             cursor: 'pointer',
                             border: selectedBackground === templateBackground ? '2px solid #007bff' : '2px solid #e5e7eb',
@@ -2172,7 +3359,7 @@ export const TemplateGenPage: React.FC = () => {
                             src={templateBackground}
                             alt="模板"
                             style={{
-                              width: '100%',
+                  width: '100%',
                               height: '100%',
                               objectFit: 'cover',
                               display: 'block',
@@ -2326,7 +3513,7 @@ export const TemplateGenPage: React.FC = () => {
               className="template-size-collapsible-header"
               onClick={() => setIsTemplateSizeCollapsed(!isTemplateSizeCollapsed)}
             >
-              <h3>模板尺寸</h3>
+            <h3>模板尺寸</h3>
               <span className="collapse-icon">
                 {isTemplateSizeCollapsed ? '▼' : '▲'}
               </span>
@@ -2334,141 +3521,205 @@ export const TemplateGenPage: React.FC = () => {
             <div className={`template-size-collapsible-content ${isTemplateSizeCollapsed ? 'collapsed' : ''}`}>
               {/* 模板尺寸选择 */}
               <div className="template-size-inner-section">
-                <div className="template-size-selector">
-                  <button
-                    className={`size-option-btn ${templateSize === '800x800' ? 'active' : ''}`}
-                    onClick={() => handleSizeChange('800x800')}
-                  >
-                    800×800
-                  </button>
-                  <button
-                    className={`size-option-btn ${templateSize === '750x1000' ? 'active' : ''}`}
-                    onClick={() => handleSizeChange('750x1000')}
-                  >
-                    750×1000
-                  </button>
-                  <button
-                    className={`size-option-btn ${templateSize === 'custom' ? 'active' : ''}`}
-                    onClick={() => handleSizeChange('custom')}
-                  >
-                    自定义
-                  </button>
-                </div>
-                {templateSize === 'custom' && (
-                  <div className="custom-size-input-wrapper">
-                    <input
-                      type="text"
-                      className="custom-size-input"
-                      value={customSize}
-                      onChange={(e) => handleCustomSizeChange(e.target.value)}
-                      placeholder="例如: 800x800 或 800*800"
-                    />
-                  </div>
-                )}
-                {htmlContent && iframeSize && (
-                  <div className="current-template-size">
-                    <span>当前模板尺寸：{iframeSize.width}×{iframeSize.height}</span>
-                  </div>
-                )}
+            <div className="template-size-selector">
+              <button
+                className={`size-option-btn ${templateSize === '800x800' ? 'active' : ''}`}
+                onClick={() => handleSizeChange('800x800')}
+              >
+                800×800
+              </button>
+              <button
+                className={`size-option-btn ${templateSize === '750x1000' ? 'active' : ''}`}
+                onClick={() => handleSizeChange('750x1000')}
+              >
+                750×1000
+              </button>
+              <button
+                className={`size-option-btn ${templateSize === 'custom' ? 'active' : ''}`}
+                onClick={() => handleSizeChange('custom')}
+              >
+                自定义
+              </button>
+            </div>
+            {templateSize === 'custom' && (
+              <div className="custom-size-input-wrapper">
+                <input
+                  type="text"
+                  className="custom-size-input"
+                  value={customSize}
+                  onChange={(e) => handleCustomSizeChange(e.target.value)}
+                  placeholder="例如: 800x800 或 800*800"
+                />
               </div>
+            )}
+            {htmlContent && iframeSize && (
+              <div className="current-template-size">
+                <span>当前模板尺寸：{iframeSize.width}×{iframeSize.height}</span>
+              </div>
+            )}
+          </div>
 
-              {/* 背景选择 */}
+          {/* 背景选择 */}
               <div className="template-size-inner-section">
                 <h4>背景选择</h4>
                 {selectedBackground ? (
                   <div className="background-single-wrapper">
                       <div
                       className="background-item-large selected"
-                        onClick={() => {
-                          // 选中时应用当前调整
+                    onClick={() => {
+                      // 选中时应用当前调整
                         applyBackgroundAdjustment(selectedBackground, backgroundPosition, backgroundSize);
-                        }}
-                      >
-                        <div 
-                          ref={backgroundThumbRef}
-                          className="background-thumb-large"
-                          onMouseEnter={(e) => {
-                            // 鼠标进入时，阻止父元素的滚动
-                              e.currentTarget.style.overflow = 'hidden';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.overflow = '';
-                          }}
-                          onMouseDown={(e) => {
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.currentTarget.classList.add('drag-over');
+                    }}
+                    onDragLeave={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.currentTarget.classList.remove('drag-over');
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.currentTarget.classList.remove('drag-over');
+                      
+                      // 获取拖拽的素材 URL
+                      const assetUrl = e.dataTransfer.getData('text/plain') || 
+                                      e.dataTransfer.getData('application/asset-url');
+                      
+                      if (assetUrl) {
+                        // 设置为新背景
+                        setSelectedBackground(assetUrl);
+                        // 重置背景位置和缩放
+                        setBackgroundPosition({ x: 0, y: 0 });
+                        setBackgroundSize(100);
+                        // 应用背景调整
+                        applyBackgroundAdjustment(assetUrl, { x: 0, y: 0 }, 100);
+                        setSuccess('已更新背景图片');
+                        console.log('[TemplateGen] 通过拖拽设置新背景:', assetUrl);
+                      }
+                    }}
+                  >
+                    <div 
+                      ref={backgroundThumbRef}
+                      className="background-thumb-large"
+                      onMouseEnter={(e) => {
+                        // 鼠标进入时，阻止父元素的滚动
+                          e.currentTarget.style.overflow = 'hidden';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.overflow = '';
+                      }}
+                      onMouseDown={(e) => {
                           if (e.button === 0) {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              const startX = e.clientX - backgroundPosition.x;
-                              const startY = e.clientY - backgroundPosition.y;
-                              
-                              const handleMouseMove = (moveEvent: MouseEvent) => {
-                                const newX = moveEvent.clientX - startX;
-                                const newY = moveEvent.clientY - startY;
-                                setBackgroundPosition({ x: newX, y: newY });
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const startX = e.clientX - backgroundPosition.x;
+                          const startY = e.clientY - backgroundPosition.y;
+                          
+                          const handleMouseMove = (moveEvent: MouseEvent) => {
+                            const newX = moveEvent.clientX - startX;
+                            const newY = moveEvent.clientY - startY;
+                            setBackgroundPosition({ x: newX, y: newY });
                             applyBackgroundAdjustment(selectedBackground, { x: newX, y: newY }, backgroundSize);
-                              };
-                              
-                              const handleMouseUp = () => {
-                                document.removeEventListener('mousemove', handleMouseMove);
-                                document.removeEventListener('mouseup', handleMouseUp);
-                              };
-                              
-                              document.addEventListener('mousemove', handleMouseMove);
-                              document.addEventListener('mouseup', handleMouseUp);
-                            }
-                          }}
-                        >
-                          <div className="background-thumb-wrapper">
-                            <img
+                          };
+                          
+                          const handleMouseUp = () => {
+                            document.removeEventListener('mousemove', handleMouseMove);
+                            document.removeEventListener('mouseup', handleMouseUp);
+                          };
+                          
+                          document.addEventListener('mousemove', handleMouseMove);
+                          document.addEventListener('mouseup', handleMouseUp);
+                        }
+                      }}
+                    >
+                      <div className="background-thumb-wrapper">
+                        <img
                             src={selectedBackground}
                             alt="当前背景"
-                              className="background-thumb-image"
-                              style={{
-                                transform: `translate(${backgroundPosition.x}px, ${backgroundPosition.y}px) scale(${backgroundSize / 100})`,
-                                transformOrigin: 'center center',
-                              }}
-                              onError={(e) => {
-                                (e.target as HTMLImageElement).style.display = 'none';
-                              }}
-                            />
+                          className="background-thumb-image"
+                          style={{
+                            transform: `translate(${backgroundPosition.x}px, ${backgroundPosition.y}px) scale(${backgroundSize / 100})`,
+                            transformOrigin: 'center center',
+                          }}
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = 'none';
+                          }}
+                        />
                           {overlaySize && (
-                              <div 
-                                className="background-crop-overlay"
-                                style={{
-                                  width: `${overlaySize.width}px`,
-                                  height: `${overlaySize.height}px`,
-                                }}
-                              />
-                            )}
-                          </div>
-                        </div>
-                          <div className="background-controls" onClick={(e) => e.stopPropagation()}>
-                            <div className="background-control-hint">
-                              <p>💡 提示：拖拽图片移动，滚轮缩放</p>
-                            </div>
-                            <div className="background-control-row">
-                              <label>缩放: {backgroundSize}%</label>
-                              <input
-                                type="range"
-                                min="50"
-                                max="200"
-                                value={backgroundSize}
-                                onChange={(e) => {
-                                  const newSize = parseInt(e.target.value);
-                                  setBackgroundSize(newSize);
-                            applyBackgroundAdjustment(selectedBackground, backgroundPosition, newSize);
-                                }}
-                              />
-                            </div>
-                          </div>
+                          <div 
+                            className="background-crop-overlay"
+                            style={{
+                              width: `${overlaySize.width}px`,
+                              height: `${overlaySize.height}px`,
+                            }}
+                          />
+                        )}
                       </div>
                     </div>
-                ) : (
-                  <div className="background-empty">
-                    <p>暂无背景</p>
-                    <p className="background-hint">可以从素材栏拖拽图片到背景区域</p>
+                      <div className="background-controls" onClick={(e) => e.stopPropagation()}>
+                        <div className="background-control-hint">
+                          <p>💡 提示：拖拽图片移动，滚轮缩放</p>
+                        </div>
+                        <div className="background-control-row">
+                          <label>缩放: {backgroundSize}%</label>
+                          <input
+                            type="range"
+                            min="50"
+                            max="200"
+                            value={backgroundSize}
+                            onChange={(e) => {
+                              const newSize = parseInt(e.target.value);
+                              setBackgroundSize(newSize);
+                            applyBackgroundAdjustment(selectedBackground, backgroundPosition, newSize);
+                            }}
+                          />
+                        </div>
+                      </div>
                   </div>
-                )}
+                </div>
+            ) : (
+              <div 
+                className="background-empty"
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.currentTarget.classList.add('drag-over');
+                }}
+                onDragLeave={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.currentTarget.classList.remove('drag-over');
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.currentTarget.classList.remove('drag-over');
+                  
+                  // 获取拖拽的素材 URL
+                  const assetUrl = e.dataTransfer.getData('text/plain') || 
+                                  e.dataTransfer.getData('application/asset-url');
+                  
+                  if (assetUrl) {
+                    // 设置为新背景
+                    setSelectedBackground(assetUrl);
+                    // 重置背景位置和缩放
+                    setBackgroundPosition({ x: 0, y: 0 });
+                    setBackgroundSize(100);
+                    // 应用背景调整
+                    applyBackgroundAdjustment(assetUrl, { x: 0, y: 0 }, 100);
+                    setSuccess('已设置背景图片');
+                    console.log('[TemplateGen] 通过拖拽设置背景:', assetUrl);
+                  }
+                }}
+              >
+                <p>暂无背景</p>
+                <p className="background-hint">可以从素材栏拖拽图片到背景区域</p>
+              </div>
+            )}
               </div>
             </div>
           </div>
@@ -2528,14 +3779,14 @@ export const TemplateGenPage: React.FC = () => {
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 {selectedFieldValue && selectedFieldValue.startsWith('data:image') ? (
-                                  <img 
-                                    src={selectedFieldValue} 
-                                    alt={f.name}
-                                    className="template-gen-field-image-preview-small"
-                                    onError={(e) => {
-                                      (e.target as HTMLImageElement).style.display = 'none';
-                                    }}
-                                  />
+                                <img 
+                                  src={selectedFieldValue} 
+                                  alt={f.name}
+                                  className="template-gen-field-image-preview-small"
+                                  onError={(e) => {
+                                    (e.target as HTMLImageElement).style.display = 'none';
+                                  }}
+                                />
                                 ) : selectedFieldValue ? (
                                   <div className="drop-zone-content">
                                     <div className="drop-zone-icon">📎</div>
@@ -2626,10 +3877,7 @@ export const TemplateGenPage: React.FC = () => {
                             <button
                               className="template-gen-image-control-btn template-gen-dpad-btn template-gen-dpad-up"
                               title="向上 (W)"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                adjustElementTransform(f.name, 'up');
-                              }}
+                              {...createContinuousAction(() => adjustElementTransform(f.name, 'up'), `${f.name}_up`)}
                             >
                               ↑
                             </button>
@@ -2637,30 +3885,21 @@ export const TemplateGenPage: React.FC = () => {
                               <button
                                 className="template-gen-image-control-btn template-gen-dpad-btn template-gen-dpad-left"
                                 title="向左 (A)"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  adjustElementTransform(f.name, 'left');
-                                }}
+                                {...createContinuousAction(() => adjustElementTransform(f.name, 'left'), `${f.name}_left`)}
                               >
                                 ←
                               </button>
                               <button
                                 className="template-gen-image-control-btn template-gen-dpad-btn template-gen-dpad-down"
                                 title="向下 (S)"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  adjustElementTransform(f.name, 'down');
-                                }}
+                                {...createContinuousAction(() => adjustElementTransform(f.name, 'down'), `${f.name}_down`)}
                               >
                                 ↓
                               </button>
                               <button
                                 className="template-gen-image-control-btn template-gen-dpad-btn template-gen-dpad-right"
                                 title="向右 (D)"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  adjustElementTransform(f.name, 'right');
-                                }}
+                                {...createContinuousAction(() => adjustElementTransform(f.name, 'right'), `${f.name}_right`)}
                               >
                                 →
                               </button>
@@ -2671,20 +3910,14 @@ export const TemplateGenPage: React.FC = () => {
                             <button
                               className="template-gen-image-control-btn template-gen-zoom-btn template-gen-zoom-in"
                               title="放大"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                adjustElementTransform(f.name, 'zoomIn');
-                              }}
+                              {...createContinuousAction(() => adjustElementTransform(f.name, 'zoomIn'), `${f.name}_zoomIn`)}
                             >
                               +
                             </button>
                             <button
                               className="template-gen-image-control-btn template-gen-zoom-btn template-gen-zoom-out"
                               title="缩小"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                adjustElementTransform(f.name, 'zoomOut');
-                              }}
+                              {...createContinuousAction(() => adjustElementTransform(f.name, 'zoomOut'), `${f.name}_zoomOut`)}
                             >
                               −
                             </button>

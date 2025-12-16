@@ -138,7 +138,26 @@ export const replaceCssUrlWithBase64 = (
 
     // 标准化路径
     const normalizedPath = urlPath.replace(/^\.\//, "").replace(/^\.\.\//, "");
-    const dataUrl = resourceMap[urlPath] || resourceMap[normalizedPath] || resourceMap["./" + normalizedPath] || resourceMap[normalizedPath.split("/").pop() || ""];
+    
+    // 关键修复：优先精确匹配完整路径，避免文件名匹配导致错误（如 bg.jpg vs bg.png）
+    // 匹配顺序：完整路径 > 标准化路径 > 相对路径 > 文件名（最后才用，可能不准确）
+    let dataUrl = resourceMap[urlPath] || 
+                  resourceMap[normalizedPath] || 
+                  resourceMap["./" + normalizedPath];
+    
+    // 只有在前面都匹配不到时，才使用文件名匹配（但这对 bg.jpg vs bg.png 会有问题）
+    // 对于背景文件（bg.*），优先使用完整路径匹配，避免文件名冲突
+    if (!dataUrl) {
+      const fileName = normalizedPath.split("/").pop() || normalizedPath;
+      // 如果是背景文件（bg.jpg, bg.png 等），不使用文件名匹配，避免匹配错误
+      if (fileName.startsWith('bg.') || fileName.startsWith('background.')) {
+        // 背景文件必须精确匹配路径，否则返回原路径（让浏览器自己处理）
+        console.warn(`[replaceCssUrlWithBase64] 背景文件路径未找到精确匹配: ${urlPath}, 标准化: ${normalizedPath}`);
+        return match;
+      }
+      // 非背景文件可以使用文件名匹配
+      dataUrl = resourceMap[fileName];
+    }
 
     if (!dataUrl) {
       return match;
