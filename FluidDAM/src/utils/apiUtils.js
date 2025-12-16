@@ -23,16 +23,16 @@ export function getApiBaseUrl() {
       return '/api'; // 使用相对路径，会被 vite proxy 转发到 3001
     }
     
-    // 如果直接访问 Banner_gen/FluidDAM 前端（端口 5174），使用 3001 端口
+    // 如果直接访问 Banner_gen/FluidDAM 前端（端口 5174），使用 3001 端口（统一后端）
     // Note: FluidDAM now runs on port 5174 via /spotstudio path, sharing the same server as Banner_gen
     if (port === '5174' || port === '5173') {
-      const apiUrl = 'http://localhost:3001';
+      const apiUrl = 'http://localhost:3001/api';
       console.log('[FluidDAM getApiBaseUrl] 直接访问前端（端口 ' + port + '），返回:', apiUrl);
       return apiUrl;
     }
     
-    // 如果端口不匹配，默认使用 3001
-    const apiUrl = 'http://localhost:3001';
+    // 如果端口不匹配，默认使用 3001（统一后端）
+    const apiUrl = 'http://localhost:3001/api';
     console.log('[FluidDAM getApiBaseUrl] 端口不匹配，默认返回:', apiUrl);
     return apiUrl;
   }
@@ -53,8 +53,8 @@ export function getApiBaseUrl() {
     return '/api';
   }
   
-  // 否则使用当前主机和3001端口
-  return `${protocol}//${hostname}:3001`;
+  // 否则使用当前主机和3001端口（统一后端）
+  return `${protocol}//${hostname}:3001/api`;
 }
 
 // 检查API是否可用
@@ -67,7 +67,9 @@ export async function checkApiAvailability() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3000); // 3秒超时
     
-    const response = await fetch(`${apiBaseUrl}/api/get-image-data`, {
+    // apiBaseUrl 可能已经是 /api 或 http://localhost:3001/api，需要正确拼接
+    const apiPath = apiBaseUrl.endsWith('/api') ? `${apiBaseUrl}/get-image-data` : `${apiBaseUrl}/api/get-image-data`;
+    const response = await fetch(apiPath, {
       method: 'GET',
       signal: controller.signal
     });
@@ -96,7 +98,9 @@ export async function saveImageDataToApi(imageData) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000); // 5秒超时
     
-    const response = await fetch(`${apiBaseUrl}/api/save-image-data`, {
+    // apiBaseUrl 可能已经是 /api 或 http://localhost:3001/api，需要正确拼接
+    const apiPath = apiBaseUrl.endsWith('/api') ? `${apiBaseUrl}/save-image-data` : `${apiBaseUrl}/api/save-image-data`;
+    const response = await fetch(apiPath, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -132,7 +136,9 @@ export async function getImageDataFromApi() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3000); // 3秒超时
     
-    const response = await fetch(`${apiBaseUrl}/api/get-image-data`, {
+    // apiBaseUrl 可能已经是 /api 或 http://localhost:3001/api，需要正确拼接
+    const apiPath = apiBaseUrl.endsWith('/api') ? `${apiBaseUrl}/get-image-data` : `${apiBaseUrl}/api/get-image-data`;
+    const response = await fetch(apiPath, {
       method: 'GET',
       signal: controller.signal
     });

@@ -8,6 +8,7 @@ import ShareCanvasButton from './ShareCanvasButton.jsx';
 import FormatBrushButton from './FormatBrushButton.jsx';
 import ImageFormatBrushButton from './ImageFormatBrushButton.jsx';
 import BatchReplaceButton from './BatchReplaceButton.jsx';
+import LocalAssetToggleButton from './LocalAssetToggleButton.jsx';
 import { getIconPath } from '../utils/iconPath.js';
 import { navigateToHome } from '../utils/navigation.js';
 
@@ -201,9 +202,17 @@ export default function IntegratedAssetSidebar({ editor, selectedFrame, setIsLoa
           updateAll();
         }
       }
-      // 监听资产变化
+      // 监听资产变化（包括删除）
       if (record && record.typeName === 'asset') {
-        console.log('检测到资产变化:', record.typeName, record.type, record.id);
+        // 检查是否是删除操作（prevRecord 存在但 record 不存在，或者 record 被标记为删除）
+        const isDeleted = !record || (prevRecord && !record);
+        console.log('检测到资产变化:', {
+          typeName: record?.typeName,
+          type: record?.type,
+          id: record?.id || prevRecord?.id,
+          isDeleted: isDeleted,
+          action: isDeleted ? '删除' : '更新/添加'
+        });
         updateAll();
       }
     }, { scope: "document" });
@@ -285,6 +294,7 @@ export default function IntegratedAssetSidebar({ editor, selectedFrame, setIsLoa
           <ShareCanvasButton editor={editor} />
           <FormatBrushButton editor={editor} iconSrc={getIconPath('icons/resize.png')} />
           <ImageFormatBrushButton editor={editor} />
+          <LocalAssetToggleButton editor={editor} />
           <button 
             onClick={onReset}
             style={{
