@@ -2081,16 +2081,16 @@ export const TemplateGenPage: React.FC = () => {
       if (!extractedCss) {
         console.warn('[TemplateGen] ⚠️ 原始 CSS 内容不存在，回退到从 iframe 提取');
         extractedCss = cssContent || "";
-        const styleTags = iframeDoc.querySelectorAll('style');
-        styleTags.forEach((style) => {
-          const cssText = style.textContent || style.innerHTML;
-          // 排除字段高亮样式和系统添加的样式
-          if (!cssText.includes('field-highlight') && 
-              !cssText.includes('outline: 3px solid') &&
-              !cssText.includes('box-shadow: 0 0 0 2px')) {
-            extractedCss += "\n" + cssText;
-          }
-        });
+      const styleTags = iframeDoc.querySelectorAll('style');
+      styleTags.forEach((style) => {
+        const cssText = style.textContent || style.innerHTML;
+        // 排除字段高亮样式和系统添加的样式
+        if (!cssText.includes('field-highlight') && 
+            !cssText.includes('outline: 3px solid') &&
+            !cssText.includes('box-shadow: 0 0 0 2px')) {
+          extractedCss += "\n" + cssText;
+        }
+      });
       }
 
       // 3. 提取所有资源（图片、字体等）
@@ -2137,8 +2137,8 @@ export const TemplateGenPage: React.FC = () => {
                 ? `${htmlDirForStructure}/image/${fileName}`
                 : `image/${fileName}`;
               imageReplacements.set(src, defaultPath);
-            }
-          }
+        }
+      }
         }
       });
 
@@ -2468,9 +2468,9 @@ export const TemplateGenPage: React.FC = () => {
               extractedCss = extractedCss.replace(urlPattern2, `url("${fontRelativePath}")`);
               extractedCss = extractedCss.replace(urlPattern3, `url("${fontRelativePath}")`);
             } else {
-              const escapedUrl = dataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-              extractedCss = extractedCss.replace(
-                new RegExp(escapedUrl, 'g'),
+                const escapedUrl = dataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                extractedCss = extractedCss.replace(
+                  new RegExp(escapedUrl, 'g'),
                 fontRelativePath
               );
             }
@@ -2592,7 +2592,7 @@ export const TemplateGenPage: React.FC = () => {
           // 关键修复：如果是新生成的背景，确保 CSS 中的路径与实际文件名一致
           if (backgroundTargetPath && originalPath === backgroundTargetPath) {
             console.log('[TemplateGen] ✅ 验证：CSS 中的背景路径已更新为:', imageRelativePath, '实际文件:', backgroundTargetPath);
-            
+      
             // 额外验证：确保替换确实发生了
             if (beforeReplace === extractedCss) {
               console.warn('[TemplateGen] ⚠️ 警告：CSS 背景路径替换可能失败，检查正则表达式');
@@ -2745,8 +2745,8 @@ export const TemplateGenPage: React.FC = () => {
         while ((remainingDataUrlMatch = remainingDataUrlRegex.exec(finalCss)) !== null) {
           const dataUrl = remainingDataUrlMatch[1];
           remainingDataUrls.add(dataUrl);
-        }
-        
+      }
+
         if (remainingDataUrls.size > 0) {
           console.warn('[TemplateGen] ⚠️ 警告：CSS 中仍有', remainingDataUrls.size, '个 dataURL 未被替换为文件路径');
           
@@ -2789,9 +2789,9 @@ export const TemplateGenPage: React.FC = () => {
                     new RegExp(`url\\(["']?${escapedUrl}["']?\\)`, 'gi'),
                     `url("${relativePath}")`
                   );
-                }
+              }
                 console.log('[TemplateGen] ✅ 已清理 CSS 中的 dataURL，替换为:', relativePath);
-              } catch (e) {
+            } catch (e) {
                 console.warn('[TemplateGen] ⚠️ 清理 dataURL 时出错:', e);
               }
             } else {
@@ -2867,7 +2867,7 @@ export const TemplateGenPage: React.FC = () => {
             }
           });
         }
-        
+      
         // 最终验证：确保 CSS 中没有任何 dataURL（所有都应该被替换为文件路径）
         const finalDataUrlCheck = /url\(["']?(data:[^"')]+)["']?\)/gi;
         const finalDataUrlMatches = finalCss.match(finalDataUrlCheck);
@@ -2962,7 +2962,7 @@ export const TemplateGenPage: React.FC = () => {
                     new RegExp(`url\\(["']?${escapedDataUrl}["']?\\)`, 'gi'),
                     `url("${bgRelativePath}")`
                   );
-                }
+        }
               } catch (e) {
                 console.warn('[TemplateGen] ⚠️ 强制替换 CSS 背景路径时出错:', e);
                 // 如果替换失败，至少记录警告
@@ -3024,12 +3024,12 @@ export const TemplateGenPage: React.FC = () => {
           if (match) {
             const mime = match[1];
             const base64 = match[2];
-            let ext = 'ttf';
-            if (mime.includes('woff2')) ext = 'woff2';
-            else if (mime.includes('woff')) ext = 'woff';
-            else if (mime.includes('otf')) ext = 'otf';
-            else if (mime.includes('eot')) ext = 'eot';
-            
+          let ext = 'ttf';
+          if (mime.includes('woff2')) ext = 'woff2';
+          else if (mime.includes('woff')) ext = 'woff';
+          else if (mime.includes('otf')) ext = 'otf';
+          else if (mime.includes('eot')) ext = 'eot';
+          
             if (originalPath) {
               // 使用原始路径
               fontDataMap.set(originalPath, { data: base64, mime, ext });
@@ -3117,7 +3117,7 @@ export const TemplateGenPage: React.FC = () => {
               console.log('[TemplateGen] 已写入生成的背景文件到 zip:', originalPath, `(${bytes.length} bytes)`);
             }
           }
-        } catch (e) {
+            } catch (e) {
           console.warn(`无法保存图片文件 ${originalPath}:`, e);
         }
       });
@@ -3564,7 +3564,7 @@ export const TemplateGenPage: React.FC = () => {
                 <h4>背景选择</h4>
                 {selectedBackground ? (
                   <div className="background-single-wrapper">
-                      <div
+                  <div
                       className="background-item-large selected"
                     onClick={() => {
                       // 选中时应用当前调整

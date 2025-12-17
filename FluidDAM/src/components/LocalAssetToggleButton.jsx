@@ -225,28 +225,71 @@ export default function LocalAssetToggleButton({ editor }) {
       }
 
       // 从编辑器中删除本机素材
-      // 确保 assetId 格式正确（TLDraw 需要完整的 asset ID）
+      // 使用 TLDraw 的 editor.deleteAssets() 方法（推荐方式）
+      // 参考：https://tldraw.dev/reference/editor/Editor#deleteAssets
       const removedIds = [];
       
-      // 批量删除所有本机素材（使用 store.remove 批量删除）
-      const normalizedIds = localAssetIdsToRemove.map(assetId => 
-        assetId.startsWith('asset:') ? assetId : `asset:${assetId}`
-      );
-      
       try {
-        // 使用 store.remove 批量删除（更高效）
-        // 注意：TLDraw 的 store.remove 需要传入数组，每个元素是完整的 record
-        // 但也可以直接传入 ID 数组，TLDraw 会自动处理
-        editor.store.remove(normalizedIds);
-        
-        console.log(`[LocalAssetToggleButton] 调用 store.remove 删除 ${normalizedIds.length} 个素材:`, normalizedIds);
-        
-        // 同时从外部跟踪 Set 中移除
-        normalizedIds.forEach(id => {
-          localAssetIdSet.delete(id);
-          localAssetIdSet.delete(id.replace('asset:', '')); // 也删除可能的非标准化格式
-          removedIds.push(id);
-        });
+        // 方法 1：尝试使用 editor.deleteAssets()（TLDraw 官方 API）
+        // deleteAssets 接受 asset ID 数组或 asset 对象数组
+        if (editor.deleteAssets && typeof editor.deleteAssets === 'function') {
+          // 收集 asset 对象（优先）或 asset ID
+          const assetsToDelete = [];
+          for (const assetId of localAssetIdsToRemove) {
+            const asset = allAssets[assetId];
+            if (asset) {
+              assetsToDelete.push(asset);
+            } else {
+              // 如果找不到 asset 对象，使用 ID
+              const normalizedId = assetId.startsWith('asset:') ? assetId : `asset:${assetId}`;
+              assetsToDelete.push(normalizedId);
+            }
+          }
+          
+          editor.deleteAssets(assetsToDelete);
+          console.log(`[LocalAssetToggleButton] 使用 deleteAssets() 删除 ${assetsToDelete.length} 个素材`);
+          
+          // 从外部跟踪 Set 中移除
+          localAssetIdsToRemove.forEach(assetId => {
+            const normalizedId = assetId.startsWith('asset:') ? assetId : `asset:${assetId}`;
+            localAssetIdSet.delete(normalizedId);
+            localAssetIdSet.delete(assetId);
+            localAssetIdSet.delete(assetId.replace('asset:', ''));
+            removedIds.push(normalizedId);
+          });
+        } else {
+          // 方法 2：回退到使用 store.remove（如果 deleteAssets 不可用）
+          console.warn('[LocalAssetToggleButton] deleteAssets 方法不可用，使用 store.remove');
+          
+          const recordsToRemove = [];
+          for (const assetId of localAssetIdsToRemove) {
+            const record = editor.store.get(assetId);
+            if (record) {
+              recordsToRemove.push(record);
+            } else {
+              const normalizedId = assetId.startsWith('asset:') ? assetId : `asset:${assetId}`;
+              const normalizedRecord = editor.store.get(normalizedId);
+              if (normalizedRecord) {
+                recordsToRemove.push(normalizedRecord);
+              } else {
+                console.warn('[LocalAssetToggleButton] 无法找到素材 record:', assetId);
+              }
+            }
+          }
+          
+          if (recordsToRemove.length > 0) {
+            editor.store.remove(recordsToRemove);
+            console.log(`[LocalAssetToggleButton] 使用 store.remove 删除 ${recordsToRemove.length} 个素材`);
+            
+            localAssetIdsToRemove.forEach(assetId => {
+              const normalizedId = assetId.startsWith('asset:') ? assetId : `asset:${assetId}`;
+              localAssetIdSet.delete(normalizedId);
+              localAssetIdSet.delete(assetId);
+              localAssetIdSet.delete(assetId.replace('asset:', ''));
+              removedIds.push(normalizedId);
+            });
+          }
+        }
         
         console.log(`[LocalAssetToggleButton] 批量删除 ${removedIds.length} 个本机素材`);
       } catch (error) {
@@ -255,12 +298,23 @@ export default function LocalAssetToggleButton({ editor }) {
         // 如果批量删除失败，逐个删除
         for (const assetId of localAssetIdsToRemove) {
           try {
-            const normalizedAssetId = assetId.startsWith('asset:') ? assetId : `asset:${assetId}`;
-            editor.store.remove([normalizedAssetId]);
-            localAssetIdSet.delete(normalizedAssetId);
+            const asset = allAssets[assetId];
+            if (asset && editor.deleteAssets) {
+              editor.deleteAssets([asset]);
+            } else {
+              const normalizedId = assetId.startsWith('asset:') ? assetId : `asset:${assetId}`;
+              const record = editor.store.get(normalizedId);
+              if (record) {
+                editor.store.remove([record]);
+              }
+            }
+            
+            const normalizedId = assetId.startsWith('asset:') ? assetId : `asset:${assetId}`;
+            localAssetIdSet.delete(normalizedId);
             localAssetIdSet.delete(assetId);
-            removedIds.push(normalizedAssetId);
-            console.log('[LocalAssetToggleButton] 已移除本机素材:', normalizedAssetId);
+            localAssetIdSet.delete(assetId.replace('asset:', ''));
+            removedIds.push(normalizedId);
+            console.log('[LocalAssetToggleButton] 已移除本机素材:', normalizedId);
           } catch (err) {
             console.error('[LocalAssetToggleButton] 移除素材失败:', assetId, err);
           }

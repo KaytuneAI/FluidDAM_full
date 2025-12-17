@@ -9,6 +9,7 @@ import FormatBrushButton from './FormatBrushButton.jsx';
 import ImageFormatBrushButton from './ImageFormatBrushButton.jsx';
 import BatchReplaceButton from './BatchReplaceButton.jsx';
 import LocalAssetToggleButton from './LocalAssetToggleButton.jsx';
+import ExportExcelButton from './ExportExcelButton.jsx';
 import { getIconPath } from '../utils/iconPath.js';
 import { navigateToHome } from '../utils/navigation.js';
 
@@ -295,6 +296,7 @@ export default function IntegratedAssetSidebar({ editor, selectedFrame, setIsLoa
           <FormatBrushButton editor={editor} iconSrc={getIconPath('icons/resize.png')} />
           <ImageFormatBrushButton editor={editor} />
           <LocalAssetToggleButton editor={editor} />
+          <ExportExcelButton editor={editor} />
           <button 
             onClick={onReset}
             style={{

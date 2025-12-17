@@ -620,7 +620,7 @@ export default function MainCanvas() {
 
   // 页面卸载前保存状态
   useEffect(() => {
-    const handleBeforeUnload = (event) => {
+    const handleBeforeUnload = async (event) => {
       if (editorRef.current) {
         try {
           
@@ -665,7 +665,34 @@ export default function MainCanvas() {
             isRefresh: true // 标记为刷新保存
           };
           
-          localStorage.setItem('autoSaveCanvas', JSON.stringify(saveData));
+          // 使用 storageManager 保存（支持 IndexedDB，避免 localStorage 配额超出）
+          // 注意：beforeunload 事件中不能使用 async/await，但可以使用 Promise（虽然可能不完整执行）
+          // 这里使用同步方式尝试保存，如果失败则静默处理
+          try {
+            const result = await storageManager.saveCanvas(saveData);
+            if (result.success) {
+              console.log(`✅ 页面关闭前保存成功 (${result.method}, ${result.size}MB)`);
+            } else {
+              console.warn('⚠️ 页面关闭前保存失败:', result.error);
+            }
+          } catch (saveError) {
+            // 如果异步保存失败，尝试同步保存到 localStorage（作为最后手段）
+            // 但如果数据太大，可能会失败，这是可以接受的
+            try {
+              const dataString = JSON.stringify(saveData);
+              const dataSizeMB = (dataString.length / 1024 / 1024).toFixed(2);
+              
+              // 如果数据小于 5MB，尝试保存到 localStorage
+              if (dataSizeMB < 5) {
+                localStorage.setItem('autoSaveCanvas', dataString);
+                console.log('✅ 页面关闭前保存到 localStorage 成功');
+              } else {
+                console.warn(`⚠️ 数据太大 (${dataSizeMB}MB)，跳过 localStorage 保存`);
+              }
+            } catch (localStorageError) {
+              console.warn('⚠️ localStorage 保存也失败，数据可能丢失:', localStorageError.message);
+            }
+          }
           
           // 可选：显示确认对话框（仅在用户主动关闭时）
           if (event.type === 'beforeunload') {
@@ -750,6 +777,67 @@ export default function MainCanvas() {
 
     console.log('开始检查从 Link 导入的素材...');
 
+    // Housekeeping: 清理旧的本机素材（从 IndexedDB 加载的，现在统一由 Link 管理）
+    const cleanupOldLocalAssets = async () => {
+      if (!editorRef.current) return;
+      
+      try {
+        console.log('[SpotStudio] 🧹 开始清理旧的本机素材...');
+        
+        const editor = editorRef.current;
+        const allAssets = editor.getAssets();
+        const oldLocalAssetsToRemove = [];
+        
+        // 查找所有标记为本机素材的 assets
+        for (const [assetId, asset] of Object.entries(allAssets)) {
+          // 检查 meta.isLocalAsset 标记（之前 LocalAssetToggleButton 添加的）
+          const isOldLocalAsset = asset?.meta?.isLocalAsset === true;
+          if (asset && asset.type === 'image' && isOldLocalAsset) {
+            oldLocalAssetsToRemove.push(assetId);
+          }
+        }
+        
+        if (oldLocalAssetsToRemove.length === 0) {
+          console.log('[SpotStudio] ✅ 没有找到需要清理的旧本机素材');
+          return;
+        }
+        
+        console.log(`[SpotStudio] 找到 ${oldLocalAssetsToRemove.length} 个旧本机素材，准备清理...`);
+        
+        // 使用 editor.deleteAssets() 删除
+        if (editor.deleteAssets && typeof editor.deleteAssets === 'function') {
+          const assetsToDelete = [];
+          for (const assetId of oldLocalAssetsToRemove) {
+            const asset = allAssets[assetId];
+            if (asset) {
+              assetsToDelete.push(asset);
+            } else {
+              assetsToDelete.push(assetId);
+            }
+          }
+          
+          editor.deleteAssets(assetsToDelete);
+          console.log(`[SpotStudio] ✅ 已清理 ${oldLocalAssetsToRemove.length} 个旧本机素材`);
+        } else {
+          // 回退到 store.remove
+          const recordsToRemove = [];
+          for (const assetId of oldLocalAssetsToRemove) {
+            const record = editor.store.get(assetId);
+            if (record) {
+              recordsToRemove.push(record);
+            }
+          }
+          
+          if (recordsToRemove.length > 0) {
+            editor.store.remove(recordsToRemove);
+            console.log(`[SpotStudio] ✅ 已清理 ${recordsToRemove.length} 个旧本机素材（使用 store.remove）`);
+          }
+        }
+      } catch (error) {
+        console.error('[SpotStudio] ❌ 清理旧本机素材失败:', error);
+      }
+    };
+
     const importAssetsFromLink = async () => {
       try {
         // 先检查 URL 参数中是否有 token（跨端口的情况）
@@ -773,12 +861,12 @@ export default function MainCanvas() {
           } catch (error) {
             console.error('❌ 获取 API 地址时出错:', error);
             console.error('错误堆栈:', error.stack);
-            return;
+            return false;
           }
           
           if (!apiBaseUrl) {
             console.error('❌ 无法获取 API 地址，apiBaseUrl 为:', apiBaseUrl);
-            return;
+            return false;
           }
           
           const fetchUrl = `${apiBaseUrl}/api/link-to-spot-assets/${token}`;
@@ -813,7 +901,7 @@ export default function MainCanvas() {
             console.log('准备处理素材数据...');
             await processAssets({ assets: result.assets });
             console.log('✅ 素材处理完成');
-            return;
+            return true; // 成功导入
           } catch (error) {
             console.error('❌ 从 API 获取素材数据失败:', error);
             console.error('错误详情:', error.message, error.stack);
@@ -838,13 +926,15 @@ export default function MainCanvas() {
           sessionStorage.removeItem(key); // 用完即删，避免脏数据
           const payload = JSON.parse(raw);
           await processAssets(payload);
-          return;
+          return true; // 成功导入
         }
         
         console.log('❌ 没有找到素材数据');
         console.log('可能的原因：1) 数据未保存 2) 跨端口导致存储不共享 3) 数据已过期');
+        return false; // 未找到数据
       } catch (error) {
         console.error('从 Link 导入素材时出错:', error);
+        return false;
       }
     };
 
@@ -910,9 +1000,19 @@ export default function MainCanvas() {
       console.log('所有素材已成功导入到 SpotStudio');
     };
 
-    // 从本机加载素材
-    const loadLocalAssets = async () => {
+    // 从本机加载素材（仅在未从 Link 导入时自动加载）
+    const loadLocalAssets = async (skipIfHasAssets = false) => {
       try {
+        // 如果 skipIfHasAssets 为 true，先检查是否已经有素材了
+        if (skipIfHasAssets && editorRef.current) {
+          const existingAssets = editorRef.current.getAssets();
+          const assetCount = Object.keys(existingAssets).length;
+          if (assetCount > 0) {
+            console.log(`[SpotStudio] 检测到已有 ${assetCount} 个素材，跳过自动加载本机素材（避免重复）`);
+            return;
+          }
+        }
+        
         console.log('[SpotStudio] 开始加载本机素材...');
         console.log('[SpotStudio] 当前 origin:', window.location.origin);
         if (!localAssetManager) {
@@ -924,6 +1024,11 @@ export default function MainCanvas() {
         const count = localAssetManager.getAssetCount();
         console.log(`[SpotStudio] 本机素材数量（元数据）: ${count}`);
         
+        if (count === 0) {
+          console.log('[SpotStudio] 本机暂无保存的素材');
+          return;
+        }
+        
         const assets = await localAssetManager.loadAssets();
         console.log(`[SpotStudio] 从本机加载了 ${assets.length} 个素材`);
         console.log('[SpotStudio] 素材详情:', assets.map(a => ({ id: a.id, name: a.name, hasDataUrl: !!a.dataUrl })));
@@ -932,9 +1037,6 @@ export default function MainCanvas() {
           console.log('[SpotStudio] 开始处理素材，添加到编辑器...');
           await processAssets({ assets });
           console.log('[SpotStudio] 素材处理完成');
-        } else {
-          console.log('[SpotStudio] 本机暂无保存的素材');
-          console.log('[SpotStudio] 提示：现在 Banner/Template 和 SpotStudio 都运行在端口 5174，应该可以共享 IndexedDB 数据库了');
         }
       } catch (error) {
         console.error('[SpotStudio] 加载本机素材失败:', error);
@@ -945,18 +1047,35 @@ export default function MainCanvas() {
     // 延迟一下，确保编辑器完全初始化（增加到2秒，确保在自动恢复之后执行）
     const timer = setTimeout(async () => {
       console.log('延迟执行导入素材检查...');
+      
+      // 先执行 housekeeping：清理旧的本机素材
       try {
-        await importAssetsFromLink();
+        await cleanupOldLocalAssets();
+      } catch (error) {
+        console.error('[SpotStudio] 清理旧本机素材时出错:', error);
+      }
+      
+      // 然后尝试从 Link 导入素材
+      let hasImportedFromLink = false;
+      try {
+        hasImportedFromLink = await importAssetsFromLink();
       } catch (error) {
         console.error('[SpotStudio] 从 Link 导入素材时出错:', error);
       }
-      // Link 导入完成后，加载本机素材
-      console.log('[SpotStudio] 开始加载本机素材...');
-      try {
-        await loadLocalAssets();
-      } catch (error) {
-        console.error('[SpotStudio] 加载本机素材时出错:', error);
-      }
+      
+      // 不再自动加载本机素材，用户可以通过按钮手动加载
+      // if (!hasImportedFromLink) {
+      //   console.log('[SpotStudio] 未从 Link 导入素材，开始加载本机素材...');
+      //   try {
+      //     await loadLocalAssets(false); // 不跳过，正常加载
+      //   } catch (error) {
+      //     console.error('[SpotStudio] 加载本机素材时出错:', error);
+      //   }
+      // } else {
+      //   console.log('[SpotStudio] 已从 Link 导入素材，跳过自动加载本机素材（避免重复）');
+      //   // 但仍然检查是否有本机素材，如果有则跳过自动加载（用户可以通过按钮手动加载）
+      //   await loadLocalAssets(true); // 跳过如果已有素材
+      // }
     }, 2000);
 
     return () => clearTimeout(timer);
