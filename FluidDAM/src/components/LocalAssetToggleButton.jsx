@@ -363,8 +363,8 @@ export default function LocalAssetToggleButton({ editor }) {
   // 图标路径：Load 图标（带勾的文件夹）和 Unload 图标（带X的文件夹）
   // 需要将图标文件放在 FluidDAM/public/icons/ 目录下
   const iconPath = isLoaded 
-    ? 'icons/unload_local_assets.png' // Unload 图标（带X的文件夹）
-    : 'icons/load_local_assets.png'; // Load 图标（带勾的文件夹）
+    ? 'icons/unload_assets.png' // Unload 图标（带X的文件夹）
+    : 'icons/load_assets.png'; // Load 图标（带勾的文件夹）
 
   const buttonText = isLoaded ? 'Unload本机素材' : 'Load本机素材';
   const buttonTitle = isLoaded 
