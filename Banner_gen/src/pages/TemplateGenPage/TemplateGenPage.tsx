@@ -1938,11 +1938,15 @@ export const TemplateGenPage: React.FC = () => {
         }
       });
       
-      // 4. 从背景样式中提取使用的资源（container 的背景）
-      if (container) {
-        const computedStyle = iframeDoc.defaultView?.getComputedStyle(container);
-        const bgImage = computedStyle?.backgroundImage || container.style.backgroundImage;
-        if (bgImage && bgImage.includes('url(')) {
+      // 4. 从背景样式中提取使用的资源（container 的背景和其他所有元素的背景）
+      // 关键修复：检查所有元素的背景图，不仅仅是 container
+      const allElementsWithBackground = iframeDoc.querySelectorAll('*');
+      allElementsWithBackground.forEach((el) => {
+        const htmlEl = el as HTMLElement;
+        const computedStyle = iframeDoc.defaultView?.getComputedStyle(htmlEl);
+        // 优先使用 inline style，如果没有则使用 computed style
+        const bgImage = htmlEl.style.backgroundImage || computedStyle?.backgroundImage || '';
+        if (bgImage && bgImage !== 'none' && bgImage.includes('url(')) {
           const bgUrlMatch = bgImage.match(/url\(["']?(data:[^"')]+)["']?\)/);
           if (bgUrlMatch) {
             const dataUrl = bgUrlMatch[1];
@@ -1950,10 +1954,24 @@ export const TemplateGenPage: React.FC = () => {
             const originalPath = originalZipStructure?.imagePathMap.get(dataUrl);
             if (originalPath) {
               usedResourcePaths.add(originalPath);
+              console.log('[TemplateGen] ✅ 发现背景图片资源:', originalPath);
+            } else {
+              // 即使不在 imagePathMap 中，也要记录（可能是新生成的）
+              console.log('[TemplateGen] ✅ 发现背景图片（新生成的）:', dataUrl.substring(0, 50) + '...');
+            }
+          }
+          // 也检查普通 URL（非 data URL）
+          const urlMatch = bgImage.match(/url\(["']?([^"')]+)["']?\)/);
+          if (urlMatch && !urlMatch[1].startsWith('data:') && !urlMatch[1].startsWith('http')) {
+            const relativePath = urlMatch[1];
+            const normalizedPath = relativePath.replace(/^\.\//, '');
+            if (originalZipStructure?.originalFiles.has(normalizedPath)) {
+              usedResourcePaths.add(normalizedPath);
+              console.log('[TemplateGen] ✅ 发现背景图片资源（相对路径）:', normalizedPath);
             }
           }
         }
-      }
+      });
       
       // 5. 确保新生成的背景也被标记为"使用"（即使不在 imagePathMap 中）
       if (hasNewGeneratedBackground && newBackgroundPath) {
@@ -2043,18 +2061,19 @@ export const TemplateGenPage: React.FC = () => {
       const originalContainer = iframeDoc.querySelector('.container') as HTMLElement;
       const cloneContainer = bodyClone.querySelector('.container') as HTMLElement;
       if (originalContainer && cloneContainer) {
-        // 获取原始容器的背景样式
-        const bgImage = originalContainer.style.backgroundImage || '';
-        const bgPosition = originalContainer.style.backgroundPosition || '';
-        const bgSize = originalContainer.style.backgroundSize || '';
-        const bgRepeat = originalContainer.style.backgroundRepeat || '';
+        // 获取原始容器的背景样式（优先使用 computed style，因为可能通过 CSS 设置）
+        const computedStyle = iframeDoc.defaultView?.getComputedStyle(originalContainer);
+        const bgImage = originalContainer.style.backgroundImage || computedStyle?.backgroundImage || '';
+        const bgPosition = originalContainer.style.backgroundPosition || computedStyle?.backgroundPosition || '';
+        const bgSize = originalContainer.style.backgroundSize || computedStyle?.backgroundSize || '';
+        const bgRepeat = originalContainer.style.backgroundRepeat || computedStyle?.backgroundRepeat || '';
         
         // 构建背景样式字符串
         const bgStyles: string[] = [];
-        if (bgImage) bgStyles.push(`background-image: ${bgImage}`);
-        if (bgPosition) bgStyles.push(`background-position: ${bgPosition}`);
-        if (bgSize) bgStyles.push(`background-size: ${bgSize}`);
-        if (bgRepeat) bgStyles.push(`background-repeat: ${bgRepeat}`);
+        if (bgImage && bgImage !== 'none') bgStyles.push(`background-image: ${bgImage}`);
+        if (bgPosition && bgPosition !== '0% 0%') bgStyles.push(`background-position: ${bgPosition}`);
+        if (bgSize && bgSize !== 'auto') bgStyles.push(`background-size: ${bgSize}`);
+        if (bgRepeat && bgRepeat !== 'repeat') bgStyles.push(`background-repeat: ${bgRepeat}`);
         
         // 获取克隆容器的现有样式
         const currentStyle = cloneContainer.getAttribute('style') || '';
@@ -2072,17 +2091,24 @@ export const TemplateGenPage: React.FC = () => {
         // 添加背景样式
         styleParts.push(...bgStyles);
         
-        // 也保存容器的尺寸（如果被修改了）
-        const width = originalContainer.style.width || '';
-        const height = originalContainer.style.height || '';
-        if (width) styleParts.push(`width: ${width}`);
-        if (height) styleParts.push(`height: ${height}`);
+        // 关键修复：确保容器尺寸与 iframeSize 一致（使用当前定义的尺寸）
+        if (iframeSize) {
+          styleParts.push(`width: ${iframeSize.width}px`);
+          styleParts.push(`height: ${iframeSize.height}px`);
+          console.log('[TemplateGen] ✅ 已保存容器尺寸:', { width: iframeSize.width, height: iframeSize.height });
+        } else {
+          // 如果没有 iframeSize，使用容器当前样式或计算值
+          const width = originalContainer.style.width || computedStyle?.width || '';
+          const height = originalContainer.style.height || computedStyle?.height || '';
+          if (width) styleParts.push(`width: ${width}`);
+          if (height) styleParts.push(`height: ${height}`);
+        }
         
         // 设置新的样式
         const newStyle = styleParts.join('; ').trim();
         if (newStyle) {
           cloneContainer.setAttribute('style', newStyle);
-          console.log('[TemplateGen] 已保存容器背景样式:', { bgImage: bgImage.substring(0, 50), bgPosition, bgSize });
+          console.log('[TemplateGen] ✅ 已保存容器背景样式和尺寸:', { bgImage: bgImage.substring(0, 50), bgPosition, bgSize, width: iframeSize?.width, height: iframeSize?.height });
         }
       }
       
@@ -2212,36 +2238,177 @@ export const TemplateGenPage: React.FC = () => {
         }
       });
       
-      // 也处理其他可能有 transform 的元素（非 img）
+      // 关键修复：处理所有非 img 元素（包括文本元素）的样式
+      // 提取字体大小、字体族、位置、transform 等所有样式
       const allOriginalElements = iframeDoc.body.querySelectorAll('*:not(img)');
-      const transformMap = new Map<HTMLElement, string>();
+      const elementStyleMap = new Map<HTMLElement, {
+        transform?: string;
+        fontSize?: string;
+        fontFamily?: string;
+        fontWeight?: string;
+        fontStyle?: string;
+        color?: string;
+        position?: string;
+        left?: string;
+        top?: string;
+        right?: string;
+        bottom?: string;
+        width?: string;
+        height?: string;
+        textAlign?: string;
+        lineHeight?: string;
+        letterSpacing?: string;
+        [key: string]: string | undefined;
+      }>();
       
       allOriginalElements.forEach((originalEl) => {
         const htmlEl = originalEl as HTMLElement;
+        const computedStyle = iframeDoc.defaultView?.getComputedStyle(htmlEl);
+        const styles: any = {};
+        
+        // 获取 transform（位置）
         const transform = htmlEl.style.transform || '';
         if (transform && transform !== 'none') {
           const translateMatch = transform.match(/translate\(([^)]+)\)/);
           if (translateMatch) {
-            transformMap.set(htmlEl, `translate(${translateMatch[1]})`);
+            styles.transform = `translate(${translateMatch[1]})`;
+          } else if (transform) {
+            // 保留完整的 transform（可能包含 scale, rotate 等）
+            styles.transform = transform;
           }
+        }
+        
+        // 获取字体相关样式（优先使用 inline style，如果没有则使用 computed style）
+        const fontSize = htmlEl.style.fontSize || computedStyle?.fontSize || '';
+        if (fontSize && fontSize !== '16px') styles.fontSize = fontSize; // 16px 是默认值，可以跳过
+        
+        const fontFamily = htmlEl.style.fontFamily || computedStyle?.fontFamily || '';
+        if (fontFamily) styles.fontFamily = fontFamily;
+        
+        const fontWeight = htmlEl.style.fontWeight || computedStyle?.fontWeight || '';
+        if (fontWeight && fontWeight !== 'normal' && fontWeight !== '400') styles.fontWeight = fontWeight;
+        
+        const fontStyle = htmlEl.style.fontStyle || computedStyle?.fontStyle || '';
+        if (fontStyle && fontStyle !== 'normal') styles.fontStyle = fontStyle;
+        
+        const color = htmlEl.style.color || computedStyle?.color || '';
+        if (color && color !== 'rgb(0, 0, 0)' && color !== '#000000') styles.color = color;
+        
+        // 获取位置相关属性
+        const position = htmlEl.style.position || computedStyle?.position || '';
+        if (position && position !== 'static') styles.position = position;
+        
+        const left = htmlEl.style.left || computedStyle?.left || '';
+        if (left && left !== 'auto') styles.left = left;
+        
+        const top = htmlEl.style.top || computedStyle?.top || '';
+        if (top && top !== 'auto') styles.top = top;
+        
+        const right = htmlEl.style.right || computedStyle?.right || '';
+        if (right && right !== 'auto') styles.right = right;
+        
+        const bottom = htmlEl.style.bottom || computedStyle?.bottom || '';
+        if (bottom && bottom !== 'auto') styles.bottom = bottom;
+        
+        // 获取尺寸
+        const width = htmlEl.style.width || '';
+        if (width) styles.width = width;
+        
+        const height = htmlEl.style.height || '';
+        if (height) styles.height = height;
+        
+        // 获取文本相关样式
+        const textAlign = htmlEl.style.textAlign || computedStyle?.textAlign || '';
+        if (textAlign && textAlign !== 'start') styles.textAlign = textAlign;
+        
+        const lineHeight = htmlEl.style.lineHeight || computedStyle?.lineHeight || '';
+        if (lineHeight && lineHeight !== 'normal') styles.lineHeight = lineHeight;
+        
+        const letterSpacing = htmlEl.style.letterSpacing || computedStyle?.letterSpacing || '';
+        if (letterSpacing && letterSpacing !== 'normal') styles.letterSpacing = letterSpacing;
+        
+        // 如果有任何样式，保存到 map
+        if (Object.keys(styles).length > 0) {
+          elementStyleMap.set(htmlEl, styles);
         }
       });
       
-      // 同步其他元素的 transform
+      // 同步所有元素的样式到克隆的元素
       const allCloneElements = bodyClone.querySelectorAll('*:not(img)');
       allCloneElements.forEach((cloneEl) => {
         const htmlCloneEl = cloneEl as HTMLElement;
+        
+        // 尝试通过 data-field 匹配
+        let originalEl: HTMLElement | null = null;
         const dataField = htmlCloneEl.getAttribute('data-field');
         if (dataField) {
-          const originalEl = iframeDoc.querySelector(`[data-field="${dataField}"]`) as HTMLElement;
-          if (originalEl && transformMap.has(originalEl)) {
-            const transform = transformMap.get(originalEl)!;
-            const currentStyle = htmlCloneEl.getAttribute('style') || '';
-            const cleanedStyle = currentStyle.replace(/\s*transform\s*:\s*[^;]+;?/g, '').trim();
-            const newStyle = cleanedStyle 
-              ? `${cleanedStyle}; transform: ${transform}`
-              : `transform: ${transform}`;
+          const found = iframeDoc.querySelector(`[data-field="${dataField}"]`) as HTMLElement;
+          if (found) originalEl = found;
+        }
+        
+        // 如果通过 data-field 找不到，尝试通过标签名和内容匹配（用于文本元素）
+        if (!originalEl) {
+          const tagName = htmlCloneEl.tagName.toLowerCase();
+          const textContent = htmlCloneEl.textContent?.trim() || '';
+          if (textContent) {
+            // 查找具有相同标签名和文本内容的元素
+            const candidates = iframeDoc.querySelectorAll(tagName);
+            for (const candidate of candidates) {
+              if ((candidate as HTMLElement).textContent?.trim() === textContent) {
+                originalEl = candidate as HTMLElement;
+                break;
+              }
+            }
+          }
+        }
+        
+        // 如果找到了原始元素且有保存的样式，应用样式
+        if (originalEl && elementStyleMap.has(originalEl)) {
+          const styles = elementStyleMap.get(originalEl)!;
+          const currentStyle = htmlCloneEl.getAttribute('style') || '';
+          
+          // 构建新的样式字符串
+          let newStyleParts: string[] = [];
+          
+          // 保留现有样式（除了我们要更新的）
+          const styleParts = currentStyle.split(';').filter(part => {
+            const trimmed = part.trim();
+            if (!trimmed) return false;
+            // 排除所有我们要更新的样式属性
+            const propName = trimmed.split(':')[0].trim().toLowerCase();
+            return !['transform', 'font-size', 'font-family', 'font-weight', 'font-style', 'color',
+                     'position', 'left', 'top', 'right', 'bottom', 'width', 'height',
+                     'text-align', 'line-height', 'letter-spacing'].includes(propName);
+          });
+          newStyleParts.push(...styleParts);
+          
+          // 按顺序添加保存的样式
+          if (styles.transform) newStyleParts.push(`transform: ${styles.transform}`);
+          if (styles.position) newStyleParts.push(`position: ${styles.position}`);
+          if (styles.left) newStyleParts.push(`left: ${styles.left}`);
+          if (styles.top) newStyleParts.push(`top: ${styles.top}`);
+          if (styles.right) newStyleParts.push(`right: ${styles.right}`);
+          if (styles.bottom) newStyleParts.push(`bottom: ${styles.bottom}`);
+          if (styles.width) newStyleParts.push(`width: ${styles.width}`);
+          if (styles.height) newStyleParts.push(`height: ${styles.height}`);
+          if (styles.fontSize) newStyleParts.push(`font-size: ${styles.fontSize}`);
+          if (styles.fontFamily) newStyleParts.push(`font-family: ${styles.fontFamily}`);
+          if (styles.fontWeight) newStyleParts.push(`font-weight: ${styles.fontWeight}`);
+          if (styles.fontStyle) newStyleParts.push(`font-style: ${styles.fontStyle}`);
+          if (styles.color) newStyleParts.push(`color: ${styles.color}`);
+          if (styles.textAlign) newStyleParts.push(`text-align: ${styles.textAlign}`);
+          if (styles.lineHeight) newStyleParts.push(`line-height: ${styles.lineHeight}`);
+          if (styles.letterSpacing) newStyleParts.push(`letter-spacing: ${styles.letterSpacing}`);
+          
+          // 设置新的样式
+          const newStyle = newStyleParts.join('; ').trim();
+          if (newStyle) {
             htmlCloneEl.setAttribute('style', newStyle);
+            console.log('[TemplateGen] ✅ 已保存元素样式:', { 
+              tag: htmlCloneEl.tagName, 
+              dataField,
+              styles: Object.keys(styles).join(', ')
+            });
           }
         }
       });
@@ -3457,7 +3624,113 @@ export const TemplateGenPage: React.FC = () => {
         }
       });
 
-      // 5. 生成 ZIP 文件并下载
+      // 5. 最终验证：确保所有显示的元素都被保存
+      console.log('[TemplateGen] 🔍 开始最终验证...');
+      
+      // 验证 1: 检查容器尺寸
+      if (iframeSize) {
+        const savedContainer = bodyClone.querySelector('.container') as HTMLElement;
+        if (savedContainer) {
+          const savedWidth = savedContainer.style.width || '';
+          const savedHeight = savedContainer.style.height || '';
+          const expectedWidth = `${iframeSize.width}px`;
+          const expectedHeight = `${iframeSize.height}px`;
+          
+          if (savedWidth !== expectedWidth || savedHeight !== expectedHeight) {
+            console.warn('[TemplateGen] ⚠️ 容器尺寸不匹配:', { savedWidth, savedHeight, expectedWidth, expectedHeight });
+            // 强制设置正确的尺寸
+            const currentStyle = savedContainer.getAttribute('style') || '';
+            const styleParts = currentStyle.split(';').filter(part => {
+              const trimmed = part.trim();
+              return trimmed && !trimmed.startsWith('width') && !trimmed.startsWith('height');
+            });
+            styleParts.push(`width: ${expectedWidth}`, `height: ${expectedHeight}`);
+            savedContainer.setAttribute('style', styleParts.join('; '));
+            console.log('[TemplateGen] ✅ 已修复容器尺寸');
+          } else {
+            console.log('[TemplateGen] ✅ 容器尺寸验证通过');
+          }
+        }
+      }
+      
+      // 验证 2: 检查所有图片是否都被保存
+      const allImagesInIframe = iframeDoc.querySelectorAll('img');
+      const allImagesInClone = bodyClone.querySelectorAll('img');
+      console.log('[TemplateGen] 📊 图片统计:', { 
+        iframe: allImagesInIframe.length, 
+        clone: allImagesInClone.length,
+        imageDataMap: imageDataMap.size 
+      });
+      
+      // 验证 3: 检查所有文本元素是否都有样式
+      const textElements = ['div', 'span', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'label', 'a'];
+      let textElementCount = 0;
+      let styledTextElementCount = 0;
+      
+      textElements.forEach(tagName => {
+        const elements = iframeDoc.querySelectorAll(tagName);
+        elements.forEach(el => {
+          const htmlEl = el as HTMLElement;
+          // 只统计有文本内容的元素
+          if (htmlEl.textContent?.trim()) {
+            textElementCount++;
+            const cloneEl = bodyClone.querySelector(`${tagName}[data-field="${htmlEl.getAttribute('data-field')}"]`) || 
+                          Array.from(bodyClone.querySelectorAll(tagName)).find(clone => 
+                            clone.textContent?.trim() === htmlEl.textContent?.trim()
+                          );
+            if (cloneEl && (cloneEl as HTMLElement).getAttribute('style')) {
+              styledTextElementCount++;
+            }
+          }
+        });
+      });
+      
+      console.log('[TemplateGen] 📊 文本元素统计:', { 
+        total: textElementCount, 
+        styled: styledTextElementCount 
+      });
+      
+      // 验证 4: 检查背景图片是否被保存
+      if (container) {
+        const computedStyle = iframeDoc.defaultView?.getComputedStyle(container);
+        const bgImage = container.style.backgroundImage || computedStyle?.backgroundImage || '';
+        if (bgImage && bgImage !== 'none' && bgImage.includes('url(')) {
+          const bgUrlMatch = bgImage.match(/url\(["']?(data:[^"')]+)["']?\)/);
+          if (bgUrlMatch) {
+            const dataUrl = bgUrlMatch[1];
+            const originalPath = originalZipStructure?.imagePathMap.get(dataUrl);
+            const isInImageDataMap = originalPath ? imageDataMap.has(originalPath) : false;
+            const isInReplacements = imageReplacements.has(dataUrl);
+            
+            if (!isInImageDataMap && !isInReplacements && !originalPath) {
+              console.warn('[TemplateGen] ⚠️ 警告：背景图片可能未被保存:', dataUrl.substring(0, 50) + '...');
+            } else {
+              console.log('[TemplateGen] ✅ 背景图片验证通过');
+            }
+          }
+        }
+      }
+      
+      // 更新 finalBodyHtml（因为可能修改了容器尺寸）
+      const updatedBodyHtml = bodyClone.innerHTML;
+      const finalHtmlUpdated = `<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="${cssRelativePath}" />
+  </head>
+  <body>
+    ${updatedBodyHtml}
+  </body>
+</html>`;
+      
+      // 更新 ZIP 中的 HTML 文件
+      zip.file(finalHtmlPath, finalHtmlUpdated);
+      
+      console.log('[TemplateGen] ✅ 最终验证完成');
+
+      // 6. 生成 ZIP 文件并下载
       const zipBlob = await zip.generateAsync({ type: "blob" });
       const url = URL.createObjectURL(zipBlob);
       const a = document.createElement('a');
@@ -3469,7 +3742,8 @@ export const TemplateGenPage: React.FC = () => {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
-      setSuccess(`模板已保存为 ZIP 文件！包含 ${resourceMap.size} 个资源文件`);
+      const totalResources = imageDataMap.size + fontDataMap.size;
+      setSuccess(`模板已保存为 ZIP 文件！包含 ${totalResources} 个资源文件（${imageDataMap.size} 个图片，${fontDataMap.size} 个字体）`);
     } catch (err: any) {
       setError(err.message || "保存模板失败");
       console.error("保存模板错误:", err);
