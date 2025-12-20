@@ -47,3 +47,9 @@ export default defineConfig(({ command }) => ({
     assetsDir: 'assets',
   },
 }))
+
+
+
+
+
+
