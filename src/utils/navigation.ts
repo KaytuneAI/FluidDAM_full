@@ -1,9 +1,24 @@
 /**
  * Unified navigation utility for cross-module navigation
  * 
- * Development mode: Use direct port URLs (http://localhost:5174, etc.)
+ * Development mode: Use direct port URLs with dynamic hostname
  * Production mode: Use directory paths (/bannergen, /spotstudio, etc.)
  */
+
+/**
+ * Get dynamic hostname (supports localhost, 127.0.0.1, and actual IP addresses)
+ */
+function getDynamicHostname(): string {
+  return window.location.hostname;
+}
+
+/**
+ * Build URL with dynamic hostname and specified port
+ */
+function buildUrlWithPort(port: number): string {
+  const hostname = getDynamicHostname();
+  return `${window.location.protocol}//${hostname}:${port}`;
+}
 
 /**
  * Check if we're in production mode
@@ -22,8 +37,11 @@ export function getBannerGenUrl(): string {
     return '/bannergen';
   }
   
-  // Development mode: Banner_gen runs on port 5173
-  return import.meta.env.VITE_BANNER_GEN_URL || 'http://localhost:5173';
+  // Development mode: Banner_gen runs on port 5173, use dynamic hostname
+  if (import.meta.env.VITE_BANNER_GEN_URL) {
+    return import.meta.env.VITE_BANNER_GEN_URL;
+  }
+  return buildUrlWithPort(5173);
 }
 
 /**
@@ -34,8 +52,11 @@ export function getFluidDAMUrl(): string {
     return '/spotstudio';
   }
   
-  // Development mode: FluidDAM (SpotStudio) runs on port 5174
-  return import.meta.env.VITE_FLUIDDAM_URL || 'http://localhost:5174';
+  // Development mode: FluidDAM (SpotStudio) runs on port 5174, use dynamic hostname
+  if (import.meta.env.VITE_FLUIDDAM_URL) {
+    return import.meta.env.VITE_FLUIDDAM_URL;
+  }
+  return buildUrlWithPort(5174);
 }
 
 /**
@@ -46,9 +67,11 @@ export function getLinkUrl(): string {
     return '/link';
   }
   
-  // Development mode: Link page is part of Banner_gen (port 5173)
-  const baseUrl = import.meta.env.VITE_BANNER_GEN_URL || 'http://localhost:5173';
-  return `${baseUrl}/link`;
+  // Development mode: Link page is part of Banner_gen (port 5173), use dynamic hostname
+  if (import.meta.env.VITE_BANNER_GEN_URL) {
+    return `${import.meta.env.VITE_BANNER_GEN_URL}/link`;
+  }
+  return `${buildUrlWithPort(5173)}/link`;
 }
 
 /**
@@ -99,9 +122,11 @@ export function getTemplateGenUrl(): string {
     return '/bannergen/template-gen';
   }
   
-  // Development mode: TemplateGen page is part of Banner_gen (port 5173)
-  const baseUrl = import.meta.env.VITE_BANNER_GEN_URL || 'http://localhost:5173';
-  return `${baseUrl}/template-gen`;
+  // Development mode: TemplateGen page is part of Banner_gen (port 5173), use dynamic hostname
+  if (import.meta.env.VITE_BANNER_GEN_URL) {
+    return `${import.meta.env.VITE_BANNER_GEN_URL}/template-gen`;
+  }
+  return `${buildUrlWithPort(5173)}/template-gen`;
 }
 
 /**

@@ -30,6 +30,14 @@ export function getBannerGenUrl(): string {
 }
 
 /**
+ * Build URL with dynamic hostname and specified port
+ */
+function buildUrlWithPort(port: number): string {
+  const hostname = window.location.hostname;
+  return `${window.location.protocol}//${hostname}:${port}`;
+}
+
+/**
  * Get the base URL for FluidDAM module
  */
 export function getFluidDAMUrl(): string {
@@ -37,14 +45,13 @@ export function getFluidDAMUrl(): string {
     return '/spotstudio';
   }
   
-  // Development mode: FluidDAM 运行在独立的端口 5174
-  // 如果配置了环境变量，使用环境变量
+  // Development mode: FluidDAM 运行在独立的端口 5174，使用动态 hostname
   if (import.meta.env.VITE_FLUIDDAM_URL) {
     return import.meta.env.VITE_FLUIDDAM_URL;
   }
   
-  // 开发模式：直接返回 http://localhost:5174
-  return 'http://localhost:5174';
+  // 开发模式：使用动态 hostname（支持 localhost、127.0.0.1 和实际 IP 地址）
+  return buildUrlWithPort(5174);
 }
 
 /**

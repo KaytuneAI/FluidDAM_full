@@ -91,7 +91,8 @@ export default function HomePage() {
               if (isProduction) {
                 target.src = '/bannergen/image/kaytuneai logo.png';
               } else {
-                const fallbackUrl = import.meta.env.VITE_BANNER_GEN_URL || 'http://localhost:5173';
+                // 开发模式：使用动态 hostname（支持 localhost、127.0.0.1 和实际 IP 地址）
+                const fallbackUrl = import.meta.env.VITE_BANNER_GEN_URL || `${window.location.protocol}//${window.location.hostname}:5173`;
                 target.src = `${fallbackUrl}/image/kaytuneai logo.png`;
               }
             }}

@@ -61,6 +61,14 @@ export function getLinkUrl() {
 }
 
 /**
+ * Build URL with dynamic hostname and specified port
+ */
+function buildUrlWithPort(port) {
+  const hostname = window.location.hostname;
+  return `${window.location.protocol}//${hostname}:${port}`;
+}
+
+/**
  * Get the home page URL
  */
 export function getHomeUrl() {
@@ -68,7 +76,7 @@ export function getHomeUrl() {
     return '/';
   }
   
-  // Development mode: use environment variable or default to port 3000
+  // Development mode: use environment variable or default to port 3000 with dynamic hostname
   if (import.meta.env.VITE_HOME_URL) {
     return import.meta.env.VITE_HOME_URL;
   }
@@ -77,7 +85,8 @@ export function getHomeUrl() {
   if (currentPort && currentPort !== '5174' && currentPort !== '5173') {
     return window.location.origin;
   }
-  return 'http://localhost:3000';
+  // Use dynamic hostname (supports localhost, 127.0.0.1, and actual IP addresses)
+  return buildUrlWithPort(3000);
 }
 
 /**

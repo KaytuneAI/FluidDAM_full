@@ -41,7 +41,7 @@ function AppContent() {
     }
     
     // SpotStudio 是另一个应用，运行在独立的端口 5174
-    // 开发模式：直接跳转到 http://localhost:5174
+    // 开发模式：使用动态 hostname（支持 localhost、127.0.0.1 和实际 IP 地址）
     // 生产模式：跳转到 /spotstudio（由 nginx 处理）
     const isProd = import.meta.env.MODE === 'production' || 
                    import.meta.env.PROD ||
@@ -49,7 +49,7 @@ function AppContent() {
     
     const spotStudioUrl = isProd 
       ? '/spotstudio' 
-      : 'http://localhost:5174';
+      : `${window.location.protocol}//${window.location.hostname}:5174`;
     
     console.log('[BannerGen] handleNavigateToSpotStudio: 跳转到', spotStudioUrl);
     console.log('[BannerGen] handleNavigateToSpotStudio: 生产模式?', isProd);
