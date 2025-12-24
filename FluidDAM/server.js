@@ -2,9 +2,20 @@ import express from 'express'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import dotenv from 'dotenv'
+import { Signer } from '@volcengine/openapi'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+
+// 加载 .env 文件（用于即梦 AI API Key）
+const envPath = path.join(__dirname, '.env')
+const envResult = dotenv.config({ path: envPath })
+if (envResult.error) {
+  console.warn('[WARN] 无法加载 .env 文件:', envPath, envResult.error.message)
+} else {
+  console.log('[INFO] .env 文件加载成功:', envPath)
+}
 
 const app = express()
 const PORT = 3001
@@ -652,6 +663,393 @@ app.get('/api/logs/files', (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 });
+
+// 即梦 AI 图片生成代理端点（解决 CORS 问题）
+// 使用火山引擎 OpenAPI HMAC 签名认证
+app.post('/api/jimeng-ai/generate', async (req, res) => {
+  try {
+    const { prompt, imageUrl, imageBase64, width, height, style, negativePrompt, mode } = req.body
+
+    if (!prompt) {
+      return res.status(400).json({ success: false, error: '提示词不能为空' })
+    }
+
+    // 从环境变量获取火山引擎配置（优先使用规范的环境变量名）
+    const accessKeyId = (process.env.VOLC_ACCESSKEY || process.env.VOLCENGINE_ACCESS_KEY_ID || process.env.VITE_JIMENG_AI_API_KEY || '').trim()
+    const secretKey = (process.env.VOLC_SECRETKEY || process.env.VOLCENGINE_SECRET_ACCESS_KEY || process.env.VITE_JIMENG_AI_API_SECRET || '').trim()
+    const baseUrl = process.env.VITE_JIMENG_AI_BASE_URL || process.env.JIMENG_AI_BASE_URL || 'https://visual.volcengineapi.com'
+    const region = process.env.VOLC_REGION || process.env.VOLCENGINE_REGION || 'cn-north-1'
+
+    if (!accessKeyId || !secretKey) {
+      log('ERROR', '火山引擎 API Key 或 Secret 未配置', {
+        hasAccessKey: !!accessKeyId,
+        hasSecretKey: !!secretKey,
+        envPath: path.join(__dirname, '.env'),
+      })
+      return res.status(500).json({ 
+        success: false, 
+        error: '火山引擎 API Key 或 Secret 未配置，请在 .env 文件中设置 VOLC_ACCESSKEY 和 VOLC_SECRETKEY'
+      })
+    }
+
+    // 辅助函数：从 dataURL 中提取纯 base64
+    const stripDataUrl = (b64) => {
+      if (!b64 || typeof b64 !== 'string') return null
+      return b64.replace(/^data:image\/\w+;base64,/, '')
+    }
+
+    // 处理图片输入
+    let finalImageBase64 = null
+    
+    if (imageBase64 && typeof imageBase64 === 'string' && imageBase64.length > 50) {
+      finalImageBase64 = stripDataUrl(imageBase64)
+      if (!finalImageBase64) {
+        return res.status(400).json({ success: false, error: 'imageBase64 格式无效，无法提取纯 base64' })
+      }
+    } else if (imageUrl) {
+      if (imageUrl.startsWith('data:image')) {
+        finalImageBase64 = stripDataUrl(imageUrl)
+        if (!finalImageBase64) {
+          return res.status(400).json({ success: false, error: 'imageUrl (data URL) 格式无效，无法提取纯 base64' })
+        }
+      } else if (imageUrl.startsWith('blob:')) {
+        log('WARN', '收到 Blob URL，后端无法处理，请前端转换为 base64', { imageUrl: imageUrl.substring(0, 50) + '...' })
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Blob URL 无法在后端处理，请前端先将图片转换为 base64 再传递' 
+        })
+      } else {
+        try {
+          const imageResponse = await fetch(imageUrl)
+          const imageBlob = await imageResponse.blob()
+          const imageBuffer = Buffer.from(await imageBlob.arrayBuffer())
+          finalImageBase64 = imageBuffer.toString('base64')
+        } catch (error) {
+          log('ERROR', '下载图片失败', { error: error.message })
+          return res.status(400).json({ success: false, error: '图片下载失败: ' + error.message })
+        }
+      }
+    }
+    
+    // 判断模式
+    const hasImage = finalImageBase64 && typeof finalImageBase64 === 'string' && finalImageBase64.length > 50
+    const isI2I = hasImage
+    
+    // 构建请求体 - 火山引擎 API 格式（即梦 4.0）
+    const requestBody = {
+      req_key: 'jimeng_t2i_v40', // 即梦 4.0，i2i 和 t2i 都用这个
+      prompt: prompt,
+      width: width && height ? Number(width) : 1024,
+      height: width && height ? Number(height) : 1024,
+      seed: -1,
+    }
+
+    if (negativePrompt) {
+      requestBody.negative_prompt = negativePrompt
+    }
+
+    if (style) {
+      requestBody.style = style
+    }
+
+    // 图生图处理：如果有图片，使用 binary_data_base64 数组格式
+    if (hasImage) {
+      requestBody.binary_data_base64 = [finalImageBase64]
+    }
+    
+    // 构建火山引擎 API 请求配置
+    const action = 'CVSync2AsyncSubmitTask'
+    const version = '2022-08-31'
+    const service = 'cv'
+    const urlObj = new URL(baseUrl)
+    const host = urlObj.host
+
+    const requestObj = {
+      region: region,
+      method: 'POST',
+      pathname: '/',
+      params: {
+        Action: action,
+        Version: version,
+      },
+      headers: {
+        'Content-Type': 'application/json',
+        'Host': host,
+      },
+      body: JSON.stringify(requestBody),
+    }
+
+    const signer = new Signer(requestObj, service)
+    const credentials = {
+      accessKeyId: accessKeyId,
+      secretKey: secretKey,
+    }
+    signer.addAuthorization(credentials)
+    const signedHeaders = requestObj.headers
+
+    const queryParams = new URLSearchParams({
+      Action: action,
+      Version: version,
+    })
+    const apiEndpoint = `${baseUrl}?${queryParams.toString()}`
+    
+    log('INFO', '调用即梦 AI API - 提交任务', { 
+      endpoint: apiEndpoint,
+      req_key: requestBody.req_key,
+      mode: isI2I ? 'i2i' : 't2i',
+    })
+
+    // 发送请求到即梦 AI API - 提交任务
+    const submitResponse = await fetch(apiEndpoint, {
+      method: 'POST',
+      headers: signedHeaders,
+      body: requestObj.body,
+    })
+
+    if (!submitResponse.ok) {
+      const errorText = await submitResponse.text()
+      let errorData
+      try {
+        errorData = JSON.parse(errorText)
+      } catch {
+        errorData = { message: errorText || '请求失败' }
+      }
+      log('ERROR', '即梦 AI API 调用失败', { 
+        status: submitResponse.status,
+        error: errorData.Message || errorData.message || errorData.error || errorText,
+      })
+      return res.status(submitResponse.status).json({
+        success: false,
+        error: errorData.Message || errorData.message || errorData.error || errorText || `HTTP error! status: ${submitResponse.status}`,
+        details: errorData
+      })
+    }
+
+    const submitData = await submitResponse.json()
+
+    // 检查响应格式
+    let taskId = null
+    if (submitData.ResponseMetadata && submitData.ResponseMetadata.Error) {
+      const error = submitData.ResponseMetadata.Error
+      log('ERROR', '即梦 AI 提交任务失败', { 
+        code: error.Code,
+        message: error.Message,
+      })
+      return res.status(400).json({
+        success: false,
+        error: error.Message || '提交任务失败',
+        code: error.Code,
+        details: submitData
+      })
+    }
+
+    // 提取 task_id
+    if (submitData.Result && submitData.Result.task_id) {
+      taskId = submitData.Result.task_id
+    } else if (submitData.task_id) {
+      taskId = submitData.task_id
+    } else if (submitData.data && submitData.data.task_id) {
+      taskId = submitData.data.task_id
+    }
+
+    if (!taskId) {
+      log('ERROR', '即梦 AI 响应中未找到 task_id', { response: submitData })
+      return res.status(500).json({
+        success: false,
+        error: '提交任务成功但未返回 task_id',
+        details: submitData
+      })
+    }
+
+    log('INFO', '即梦 AI 任务提交成功', { taskId })
+
+    // 轮询获取结果
+    const maxPollingAttempts = 60
+    const pollingInterval = 2000
+    
+    for (let attempt = 1; attempt <= maxPollingAttempts; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, pollingInterval))
+
+      const getResultRequestObj = {
+        region: region,
+        method: 'POST',
+        pathname: '/',
+        params: {
+          Action: 'CVSync2AsyncGetResult',
+          Version: version,
+        },
+        headers: {
+          'Content-Type': 'application/json',
+          'Host': host,
+        },
+        body: JSON.stringify({
+          req_key: requestBody.req_key,
+          task_id: taskId,
+        }),
+      }
+
+      const resultSigner = new Signer(getResultRequestObj, service)
+      resultSigner.addAuthorization(credentials)
+      const resultSignedHeaders = getResultRequestObj.headers
+
+      const resultQueryParams = new URLSearchParams({
+        Action: 'CVSync2AsyncGetResult',
+        Version: version,
+      })
+      const resultEndpoint = `${baseUrl}?${resultQueryParams.toString()}`
+
+      try {
+        const resultResponse = await fetch(resultEndpoint, {
+          method: 'POST',
+          headers: resultSignedHeaders,
+          body: getResultRequestObj.body,
+        })
+
+        if (!resultResponse.ok) {
+          const errorText = await resultResponse.text()
+          log('WARN', `即梦 AI 查询结果失败 (尝试 ${attempt}/${maxPollingAttempts})`, { 
+            status: resultResponse.status,
+            error: errorText
+          })
+          continue
+        }
+
+        const resultData = await resultResponse.json()
+
+        if (resultData.ResponseMetadata && resultData.ResponseMetadata.Error) {
+          const error = resultData.ResponseMetadata.Error
+          if (error.Code === 'Processing' || error.Message?.includes('处理中') || error.Message?.includes('processing')) {
+            log('INFO', `即梦 AI 任务处理中 (尝试 ${attempt}/${maxPollingAttempts})`, { taskId })
+            continue
+          }
+          log('ERROR', '即梦 AI 查询结果失败', { 
+            code: error.Code,
+            message: error.Message,
+          })
+          return res.status(400).json({
+            success: false,
+            error: error.Message || '查询结果失败',
+            code: error.Code,
+            taskId,
+            details: resultData
+          })
+        }
+
+        const data = resultData.data || resultData.Result || resultData.result || resultData
+        const status = (data && data.status) || resultData.status || 'unknown'
+        
+        if (status === 'done') {
+          const extractImage = (dataObj) => {
+            if (dataObj.image_base64 && typeof dataObj.image_base64 === 'string') {
+              return { imageBase64: dataObj.image_base64, imageUrl: null }
+            }
+            if (dataObj.binary_data_base64 && Array.isArray(dataObj.binary_data_base64) && dataObj.binary_data_base64.length > 0) {
+              const firstImage = dataObj.binary_data_base64[0]
+              if (typeof firstImage === 'string') {
+                return { imageBase64: firstImage, imageUrl: null }
+              }
+            }
+            if (dataObj.images && Array.isArray(dataObj.images) && dataObj.images.length > 0) {
+              const firstImage = dataObj.images[0]
+              if (typeof firstImage === 'string') {
+                return { imageBase64: firstImage, imageUrl: null }
+              }
+              return { 
+                imageBase64: firstImage.image_base64 || firstImage.image, 
+                imageUrl: firstImage.image_url || firstImage.url 
+              }
+            }
+            if (dataObj.image_urls && Array.isArray(dataObj.image_urls) && dataObj.image_urls.length > 0) {
+              return { imageBase64: null, imageUrl: dataObj.image_urls[0] }
+            }
+            if (dataObj.image) return { imageBase64: dataObj.image, imageUrl: null }
+            if (dataObj.image_url) return { imageBase64: null, imageUrl: dataObj.image_url }
+            if (dataObj.url) return { imageBase64: null, imageUrl: dataObj.url }
+            return null
+          }
+          
+          const imageData = extractImage(data)
+          if (imageData && imageData.imageBase64) {
+            log('INFO', '即梦 AI 生成成功', { 
+              taskId,
+              attempt,
+            })
+
+            return res.json({
+              success: true,
+              mode: isI2I ? 'i2i' : 't2i',
+              imageUrl: imageData.imageUrl,
+              imageBase64: imageData.imageBase64,
+              taskId: taskId,
+            })
+          } else if (imageData && imageData.imageUrl) {
+            return res.json({
+              success: true,
+              imageUrl: imageData.imageUrl,
+              imageBase64: null,
+              taskId: taskId,
+            })
+          } else {
+            log('WARN', '即梦 AI 任务完成但未找到图片字段', { 
+              taskId,
+              dataKeys: Object.keys(data),
+            })
+            return res.json({
+              success: false,
+              error: '任务完成但未找到图片结果',
+              taskId: taskId,
+              details: data
+            })
+          }
+        }
+        
+        if (status === 'failed' || status === 'error') {
+          log('ERROR', '即梦 AI 任务执行失败', { 
+            taskId,
+            status,
+            error: data.error || data.message
+          })
+          return res.json({
+            success: false,
+            error: data.error || data.message || '任务执行失败',
+            taskId: taskId,
+            details: data
+          })
+        }
+        
+        if (['in_queue', 'running', 'processing'].includes(status)) {
+          log('INFO', `即梦 AI 任务处理中 (尝试 ${attempt}/${maxPollingAttempts})`, { 
+            taskId,
+            status
+          })
+        }
+      } catch (pollError) {
+        log('WARN', `即梦 AI 轮询请求异常 (尝试 ${attempt}/${maxPollingAttempts})`, { 
+          error: pollError.message
+        })
+      }
+    }
+
+    // 轮询超时
+    log('WARN', '即梦 AI 任务轮询达到最大尝试次数', { 
+      taskId, 
+      attempts: maxPollingAttempts,
+    })
+    return res.json({
+      success: true,
+      status: 'pending',
+      taskId: taskId,
+      message: '任务处理时间较长，请稍后查询结果',
+      attempts: maxPollingAttempts,
+    })
+  } catch (error) {
+    log('ERROR', '即梦 AI 代理调用失败', { error: error.message, stack: error.stack })
+    res.status(500).json({
+      success: false,
+      error: error.message || '生成失败，请检查网络连接和 API 配置',
+    })
+  }
+})
 
 // 注意：分享链接现在直接指向前端应用，不再需要重定向路由
 
