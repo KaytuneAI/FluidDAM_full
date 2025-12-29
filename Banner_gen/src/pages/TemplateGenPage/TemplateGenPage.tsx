@@ -16,6 +16,8 @@ import {
 import { localAssetManager } from "@shared/utils/localAssetManager";
 import { BannerData } from "../../types";
 import { generateImageWithJimengAi, enrichPrompt } from "../../utils/jimengAi";
+import { useUndoRedo } from "../../utils/useUndoRedo";
+import { UndoRedoButtons } from "../../components/UndoRedoButtons";
 import "./TemplateGenPage.css";
 
 export const TemplateGenPage: React.FC = () => {
@@ -40,6 +42,17 @@ export const TemplateGenPage: React.FC = () => {
   const [templateFields, setTemplateFields] = useState<TemplateField[]>([]);
   const [selectedField, setSelectedField] = useState<string | null>(null);
   const [selectedFieldValue, setSelectedFieldValue] = useState<string>("");
+  
+  // 字段值映射（用于undo/redo）
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
+  
+  // 使用 ref 存储 fieldValues 的最新值，避免 captureSnapshot 在 fieldValues 变化时重新创建
+  const fieldValuesRef = useRef<Record<string, string>>({});
+  
+  // 同步 fieldValues 到 ref
+  useEffect(() => {
+    fieldValuesRef.current = fieldValues;
+  }, [fieldValues]);
   
   // 模板尺寸相关状态
   const [templateSize, setTemplateSize] = useState<'800x800' | '750x1000' | 'custom'>('800x800');
@@ -71,6 +84,194 @@ export const TemplateGenPage: React.FC = () => {
   const [originalIframeSize, setOriginalIframeSize] = useState<{ width: number; height: number } | null>(null);
   const [originalBackgroundPosition, setOriginalBackgroundPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [originalBackgroundSize, setOriginalBackgroundSize] = useState<number>(100);
+
+  // Undo/Redo 统一快照类型
+  type TemplateSnapshot = {
+    // 尺寸与背景（React state）
+    iframeSize: { width: number; height: number } | null;
+    templateSize: '800x800' | '750x1000' | 'custom';
+    customSize: string;
+    selectedBackground: string | null;
+    backgroundPosition: { x: number; y: number };
+    backgroundSize: number;
+    // 字段值（面板层的真实值）
+    fieldValues: Record<string, string>; // 文本字段=文本；图片字段=src/url
+    // iframe 内元素状态（最小必要集合）
+    transforms: Record<string, string>; // data-field -> transform
+  };
+
+  // 标记是否正在恢复状态（避免恢复时触发新的历史记录）
+  const isRestoringRef = useRef<boolean>(false);
+  
+  // Undo/Redo 就绪开关（防止模板加载阶段触发 undo/redo）
+  const undoReadyRef = useRef<boolean>(false);
+  
+  // 防止多次初始化历史记录（避免重复 reset）
+  const didInitHistoryRef = useRef<boolean>(false);
+  
+  // 使用ref存储applyBackgroundAdjustment，避免顺序依赖问题
+  const applyBackgroundAdjustmentRef = useRef<((bgUrl: string, position: { x: number; y: number }, size: number) => void) | null>(null);
+
+  // Undo/Redo Hook - 不传初始状态，避免影响模板初始化
+  const {
+    currentState: templateSnapshotState,
+    pushState: pushTemplateSnapshot,
+    undo: undoTemplate,
+    redo: redoTemplate,
+    canUndo,
+    canRedo,
+    reset: resetTemplateHistory,
+  } = useUndoRedo<TemplateSnapshot>(undefined, 50);
+
+  // 捕获完整的模板快照
+  const captureSnapshot = useCallback((): TemplateSnapshot => {
+    // 从 iframe 读取所有字段的当前值（使用 ref 获取最新值，避免依赖 fieldValues）
+    const currentFieldValues: Record<string, string> = { ...fieldValuesRef.current };
+    
+    if (previewIframeRef.current) {
+      try {
+        const iframeDoc = previewIframeRef.current.contentDocument || previewIframeRef.current.contentWindow?.document;
+        if (iframeDoc) {
+          // 从 iframe 读取所有字段的实际值（优先使用 iframe 中的实际值）
+          const elements = Array.from(iframeDoc.querySelectorAll('[data-field]')) as HTMLElement[];
+          elements.forEach(el => {
+            const fieldName = el.getAttribute('data-field');
+            if (fieldName) {
+              if (el.tagName === 'IMG') {
+                currentFieldValues[fieldName] = (el as HTMLImageElement).src || '';
+              } else {
+                currentFieldValues[fieldName] = el.textContent?.trim() || el.innerText?.trim() || '';
+              }
+            }
+          });
+        }
+      } catch (e) {
+        console.warn('从iframe读取字段值失败:', e);
+      }
+    }
+
+    // 从 iframe 读取所有元素的 transform
+    const transforms: Record<string, string> = {};
+    if (previewIframeRef.current) {
+      try {
+        const iframeDoc = previewIframeRef.current.contentDocument || previewIframeRef.current.contentWindow?.document;
+        if (iframeDoc) {
+          const elements = Array.from(iframeDoc.querySelectorAll('[data-field]')) as HTMLElement[];
+          elements.forEach(el => {
+            const fieldName = el.getAttribute('data-field');
+            if (fieldName) {
+              transforms[fieldName] = el.style.transform || '';
+            }
+          });
+        }
+      } catch (e) {
+        console.warn('捕获transform状态失败:', e);
+      }
+    }
+
+    return {
+      iframeSize,
+      templateSize,
+      customSize,
+      selectedBackground,
+      backgroundPosition,
+      backgroundSize,
+      fieldValues: currentFieldValues,
+      transforms,
+    };
+  }, [iframeSize, templateSize, customSize, selectedBackground, backgroundPosition, backgroundSize]);
+
+  // 恢复完整的模板快照
+  const restoreSnapshot = useCallback((snapshot: TemplateSnapshot) => {
+    if (!snapshot) return;
+
+    isRestoringRef.current = true;
+
+    try {
+      // 1. 恢复 React states（尺寸/背景/fieldValues）
+      if (snapshot.iframeSize) {
+        setIframeSize(snapshot.iframeSize);
+      }
+      setTemplateSize(snapshot.templateSize);
+      setCustomSize(snapshot.customSize);
+      setSelectedBackground(snapshot.selectedBackground);
+      setBackgroundPosition(snapshot.backgroundPosition);
+      setBackgroundSize(snapshot.backgroundSize);
+      setFieldValues(snapshot.fieldValues);
+
+      // 2. 等待 iframe ready（使用 requestAnimationFrame + setTimeout 组合）
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          if (!previewIframeRef.current) {
+            isRestoringRef.current = false;
+            return;
+          }
+
+          try {
+            const iframeDoc = previewIframeRef.current.contentDocument || previewIframeRef.current.contentWindow?.document;
+            if (!iframeDoc) {
+              isRestoringRef.current = false;
+              return;
+            }
+
+            // 3. 应用 fieldValues 到 iframe（文本写 textContent，图片写 src）
+            Object.entries(snapshot.fieldValues).forEach(([fieldName, value]) => {
+              const elements = Array.from(iframeDoc.querySelectorAll(`[data-field="${fieldName}"]`)) as HTMLElement[];
+              elements.forEach(el => {
+                if (el.tagName === 'IMG') {
+                  (el as HTMLImageElement).src = value;
+                } else {
+                  el.textContent = value;
+                }
+              });
+            });
+
+            // 4. 应用 transforms 到 iframe
+            Object.entries(snapshot.transforms).forEach(([fieldName, transform]) => {
+              const elements = Array.from(iframeDoc.querySelectorAll(`[data-field="${fieldName}"]`)) as HTMLElement[];
+              elements.forEach(el => {
+                el.style.transform = transform;
+                el.style.transformOrigin = 'center center';
+              });
+            });
+
+            // 5. 应用背景调整
+            if (snapshot.selectedBackground && applyBackgroundAdjustmentRef.current) {
+              applyBackgroundAdjustmentRef.current(
+                snapshot.selectedBackground,
+                snapshot.backgroundPosition,
+                snapshot.backgroundSize
+              );
+            }
+          } catch (e) {
+            console.warn('恢复快照失败:', e);
+          } finally {
+            // 延迟重置标志，确保所有状态更新完成
+            setTimeout(() => {
+              isRestoringRef.current = false;
+            }, 100);
+          }
+        }, 100);
+      });
+    } catch (e) {
+      console.warn('恢复快照失败:', e);
+      isRestoringRef.current = false;
+    }
+  }, []);
+
+  // 提交快照到历史记录
+  const commitSnapshot = useCallback((reason: string) => {
+    if (isRestoringRef.current || !undoReadyRef.current) return;
+    const snap = captureSnapshot();
+    pushTemplateSnapshot(snap);
+  }, [captureSnapshot, pushTemplateSnapshot]);
+
+  // 当快照历史状态变化时，恢复状态（只在 undo ready 时应用）
+  useEffect(() => {
+    if (undoReadyRef.current && templateSnapshotState && !isRestoringRef.current) {
+      restoreSnapshot(templateSnapshotState);
+    }
+  }, [templateSnapshotState, restoreSnapshot]);
   
   // 缩放所有元素以适应新尺寸（保持宽高比，确保两边都能 fit 到新尺寸内）
   // 目标：不丢失任何元素，缩放原图直到长宽两边都可以 fit 到新尺寸内
@@ -238,11 +439,17 @@ export const TemplateGenPage: React.FC = () => {
       const width = parseInt(match[1], 10);
       const height = parseInt(match[2], 10);
       if (width > 0 && height > 0) {
+        // 尺寸切换前先提交快照
+        commitSnapshot('before-resize');
         // 从原始模板恢复并应用到新尺寸
         restoreFromOriginalAndResize(width, height);
+        // 尺寸切换完成后提交快照
+        setTimeout(() => {
+          commitSnapshot('after-resize');
+        }, 800); // 等待restoreFromOriginalAndResize完成
       }
     }
-  }, [restoreFromOriginalAndResize]);
+  }, [restoreFromOriginalAndResize, commitSnapshot]);
 
   // 应用背景调整到实际的 iframe
   // 将右侧小图中图片相对于虚线边框的位置和缩放，按比例转换到左侧大图
@@ -287,6 +494,11 @@ export const TemplateGenPage: React.FC = () => {
       console.warn('应用背景调整失败:', e);
     }
   }, [iframeSize, overlaySize]);
+
+  // 更新applyBackgroundAdjustment的ref
+  useEffect(() => {
+    applyBackgroundAdjustmentRef.current = applyBackgroundAdjustment;
+  }, [applyBackgroundAdjustment]);
 
   // 从 CSS 中提取 .container 的背景图片（主背景）
   const extractBackgroundImages = useCallback((html: string, css: string) => {
@@ -612,14 +824,21 @@ export const TemplateGenPage: React.FC = () => {
     setTimeout(checkSize, 600);
   }, [loadBackgroundStyleFromIframe]);
 
-  // 当 HTML 或 CSS 内容变化时，调整 iframe 尺寸
+  // 当 HTML 或 CSS 内容变化时，调整 iframe 尺寸，并重置 undo ready 状态
   useEffect(() => {
     if (htmlContent && previewIframeRef.current) {
+      // 模板内容变化时，重置 undo ready 状态和初始化标记（等待 iframe 重新加载）
+      undoReadyRef.current = false;
+      didInitHistoryRef.current = false; // 允许重新初始化历史记录
       // 等待 iframe 加载完成后再调整尺寸
       const timer = setTimeout(() => {
         adjustIframeSize();
       }, 100);
       return () => clearTimeout(timer);
+    } else {
+      // 模板被清除时，也重置 undo ready 和初始化标记
+      undoReadyRef.current = false;
+      didInitHistoryRef.current = false;
     }
   }, [htmlContent, cssContent, adjustIframeSize]);
 
@@ -1077,6 +1296,8 @@ export const TemplateGenPage: React.FC = () => {
       // 判断文件类型
       if (fileName.endsWith('.zip')) {
         // ZIP 文件处理
+        // 模板内容变化时，重置 undo ready 状态（等待 iframe 重新加载）
+        undoReadyRef.current = false;
         const result = await processZipFile(file);
         setHtmlContent(result.html);
         setCssContent(result.css);
@@ -1215,6 +1436,8 @@ export const TemplateGenPage: React.FC = () => {
         setOriginalIframeSize(null);
       } else if (fileName.endsWith('.html') || fileName.endsWith('.htm')) {
         // HTML 文件处理（会自动提取 CSS）
+        // 模板内容变化时，重置 undo ready 状态（等待 iframe 重新加载）
+        undoReadyRef.current = false;
         const result = await handleHtmlUploadUtil(
           file,
           (result) => {
@@ -1344,6 +1567,9 @@ export const TemplateGenPage: React.FC = () => {
     }
   }, [selectedField, highlightElementInIframe, clearAllFieldHighlights]);
 
+  // 文本输入防抖定时器
+  const textInputDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // 更新字段值
   const updateFieldValue = useCallback((fieldName: string, value: string) => {
     if (!previewIframeRef.current?.contentDocument) return;
@@ -1357,10 +1583,16 @@ export const TemplateGenPage: React.FC = () => {
     } else {
       element.textContent = value;
     }
+
+    // 更新fieldValues状态
+    setFieldValues(prev => ({
+      ...prev,
+      [fieldName]: value,
+    }));
   }, []);
 
   // 存储所有按钮的连续触发定时器（使用 Map 来区分不同的按钮）
-  const continuousActionTimers = useRef<Map<string, { interval: NodeJS.Timeout | null; timeout: NodeJS.Timeout | null }>>(new Map());
+  const continuousActionTimers = useRef<Map<string, { interval: ReturnType<typeof setInterval> | null; timeout: ReturnType<typeof setTimeout> | null }>>(new Map());
 
   // 组件卸载时清理所有定时器
   useEffect(() => {
@@ -1590,6 +1822,7 @@ export const TemplateGenPage: React.FC = () => {
         let startTranslateX = 0;
         let startTranslateY = 0;
         let currentScale = 1;
+        let wheelDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
         const parseTransform = (transform: string) => {
           let tx = 0, ty = 0, s = 1;
@@ -1654,6 +1887,10 @@ export const TemplateGenPage: React.FC = () => {
         };
 
         const handleMouseUp = () => {
+          if (isDragging) {
+            // 拖拽结束时提交快照
+            commitSnapshot('drag');
+          }
           isDragging = false;
           draggedElement = null;
         };
@@ -1679,6 +1916,17 @@ export const TemplateGenPage: React.FC = () => {
 
           // 对当前滚轮的元素应用缩放
           applyTransform(target, parsed.tx, parsed.ty, newScale);
+
+          // 清除之前的定时器
+          if (wheelDebounceTimer) {
+            clearTimeout(wheelDebounceTimer);
+          }
+
+          // 设置新的定时器，在滚轮停止300ms后提交快照
+          wheelDebounceTimer = setTimeout(() => {
+            commitSnapshot('wheel');
+            wheelDebounceTimer = null;
+          }, 300);
         };
 
         // 添加事件监听器
@@ -1717,6 +1965,12 @@ export const TemplateGenPage: React.FC = () => {
 
         // 清理函数
         return () => {
+          // 清除滚轮防抖定时器
+          if (wheelDebounceTimer) {
+            clearTimeout(wheelDebounceTimer);
+            wheelDebounceTimer = null;
+          }
+
           elements.forEach(el => {
             el.removeEventListener('mousedown', handleMouseDown);
             el.style.cursor = '';
@@ -1759,7 +2013,7 @@ export const TemplateGenPage: React.FC = () => {
         cleanup();
       }
     };
-  }, [selectedField, iframeSize]);
+  }, [selectedField, iframeSize, commitSnapshot]);
 
   // 预览 iframe 加载完成
   const handlePreviewIframeLoad = useCallback(() => {
@@ -1789,8 +2043,16 @@ export const TemplateGenPage: React.FC = () => {
     // 延迟读取背景样式，确保样式已完全应用
     setTimeout(() => {
       loadBackgroundStyleFromIframe();
+      // 模板和 iframe 完全 ready 后，允许 undo/redo
+      undoReadyRef.current = true;
+      // 初始化undo/redo历史记录（只初始化一次，避免重复 reset）
+      if (!didInitHistoryRef.current) {
+        // 注意：不传初始状态，避免触发 restoreSnapshot
+        resetTemplateHistory(undefined);
+        didInitHistoryRef.current = true;
+      }
     }, 200);
-  }, [htmlContent, adjustIframeSize, handleIframeElementClick, loadBackgroundStyleFromIframe]);
+  }, [htmlContent, adjustIframeSize, handleIframeElementClick, loadBackgroundStyleFromIframe, captureSnapshot, resetTemplateHistory]);
 
   // 保存模板为 ZIP 文件
   const handleSaveTemplate = useCallback(async () => {
@@ -3871,6 +4133,10 @@ export const TemplateGenPage: React.FC = () => {
                           className="image-selection-item"
                           onClick={() => {
                             setSelectedBackground(templateBackground);
+                            // 选择背景是离散操作，立即提交快照
+                            setTimeout(() => {
+                              commitSnapshot('background-select');
+                            }, 100);
                           }}
                 style={{
                             position: 'relative',
@@ -3940,7 +4206,13 @@ export const TemplateGenPage: React.FC = () => {
                       <div
                         key={`generated-${index}`}
                         className="image-selection-item"
-                        onClick={() => setSelectedBackground(bg)}
+                        onClick={() => {
+                          setSelectedBackground(bg);
+                          // 选择背景是离散操作，立即提交快照
+                          setTimeout(() => {
+                            commitSnapshot('background-select');
+                          }, 100);
+                        }}
                         style={{
                           position: 'relative',
                           cursor: 'pointer',
@@ -4134,6 +4406,10 @@ export const TemplateGenPage: React.FC = () => {
                         applyBackgroundAdjustment(assetUrl, { x: 0, y: 0 }, 100);
                         setSuccess('已更新背景图片');
                         console.log('[TemplateGen] 通过拖拽设置新背景:', assetUrl);
+                        // 拖拽替换背景是离散操作，立即提交快照
+                        setTimeout(() => {
+                          commitSnapshot('background-drop');
+                        }, 100);
                       }
                     }}
                   >
@@ -4164,6 +4440,10 @@ export const TemplateGenPage: React.FC = () => {
                           const handleMouseUp = () => {
                             document.removeEventListener('mousemove', handleMouseMove);
                             document.removeEventListener('mouseup', handleMouseUp);
+                            // 背景拖拽结束时提交快照
+                            setTimeout(() => {
+                              commitSnapshot('background-drag');
+                            }, 100);
                           };
                           
                           document.addEventListener('mousemove', handleMouseMove);
@@ -4209,7 +4489,13 @@ export const TemplateGenPage: React.FC = () => {
                             onChange={(e) => {
                               const newSize = parseInt(e.target.value);
                               setBackgroundSize(newSize);
-                            applyBackgroundAdjustment(selectedBackground, backgroundPosition, newSize);
+                              applyBackgroundAdjustment(selectedBackground, backgroundPosition, newSize);
+                            }}
+                            onMouseUp={() => {
+                              // 背景缩放结束时提交快照（使用防抖）
+                              setTimeout(() => {
+                                commitSnapshot('background-size');
+                              }, 300);
                             }}
                           />
                         </div>
@@ -4248,6 +4534,10 @@ export const TemplateGenPage: React.FC = () => {
                     applyBackgroundAdjustment(assetUrl, { x: 0, y: 0 }, 100);
                     setSuccess('已设置背景图片');
                     console.log('[TemplateGen] 通过拖拽设置背景:', assetUrl);
+                    // 拖拽替换背景是离散操作，立即提交快照
+                    setTimeout(() => {
+                      commitSnapshot('background-drop');
+                    }, 100);
                   }
                 }}
               >
@@ -4262,7 +4552,15 @@ export const TemplateGenPage: React.FC = () => {
           {/* 可替换字段列表 */}
           {templateFields.length > 0 && (
             <div className="template-gen-control-section">
-              <h3>可替换字段 ({templateFields.length})</h3>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <h3 style={{ margin: 0 }}>可替换字段 ({templateFields.length})</h3>
+                <UndoRedoButtons
+                  onUndo={undoTemplate}
+                  onRedo={redoTemplate}
+                  canUndo={canUndo}
+                  canRedo={canRedo}
+                />
+              </div>
               <div className="template-gen-field-list-wrapper">
                 {templateFields.map((f) => (
                   <div
@@ -4309,6 +4607,10 @@ export const TemplateGenPage: React.FC = () => {
                                     // 立即更新显示值，避免从 iframe 读取时图片还未加载完成
                                     setSelectedFieldValue(assetUrl);
                                     setSuccess(`已替换 ${f.label || f.name} 的素材`);
+                                    // 拖拽替换是离散操作，立即提交快照
+                                    setTimeout(() => {
+                                      commitSnapshot('drop-image');
+                                    }, 100);
                                   }
                                 }}
                                 onClick={(e) => e.stopPropagation()}
@@ -4343,6 +4645,28 @@ export const TemplateGenPage: React.FC = () => {
                                     const newValue = e.target.value;
                                     setSelectedFieldValue(newValue);
                                     updateFieldValue(f.name, newValue);
+                                    // 清除之前的定时器
+                                    if (textInputDebounceTimerRef.current) {
+                                      clearTimeout(textInputDebounceTimerRef.current);
+                                    }
+                                    // 设置新的定时器，400ms后提交快照
+                                    textInputDebounceTimerRef.current = setTimeout(() => {
+                                      setTimeout(() => {
+                                        commitSnapshot('text-input');
+                                        textInputDebounceTimerRef.current = null;
+                                      }, 100);
+                                    }, 400);
+                                  }}
+                                  onBlur={() => {
+                                    // 清除防抖定时器
+                                    if (textInputDebounceTimerRef.current) {
+                                      clearTimeout(textInputDebounceTimerRef.current);
+                                      textInputDebounceTimerRef.current = null;
+                                    }
+                                    // 失焦时立即提交快照
+                                    setTimeout(() => {
+                                      commitSnapshot('text-input-blur');
+                                    }, 100);
                                   }}
                                   placeholder="输入图片 URL"
                                   onClick={(e) => e.stopPropagation()}
@@ -4359,6 +4683,28 @@ export const TemplateGenPage: React.FC = () => {
                                 const newValue = e.target.value;
                                 setSelectedFieldValue(newValue);
                                 updateFieldValue(f.name, newValue);
+                                // 清除之前的定时器
+                                if (textInputDebounceTimerRef.current) {
+                                  clearTimeout(textInputDebounceTimerRef.current);
+                                }
+                                // 设置新的定时器，400ms后提交快照
+                                textInputDebounceTimerRef.current = setTimeout(() => {
+                                  setTimeout(() => {
+                                    commitSnapshot('text-input');
+                                    textInputDebounceTimerRef.current = null;
+                                  }, 100);
+                                }, 400);
+                              }}
+                              onBlur={() => {
+                                // 清除防抖定时器
+                                if (textInputDebounceTimerRef.current) {
+                                  clearTimeout(textInputDebounceTimerRef.current);
+                                  textInputDebounceTimerRef.current = null;
+                                }
+                                // 失焦时立即提交快照
+                                setTimeout(() => {
+                                  commitSnapshot('text-input-blur');
+                                }, 100);
                               }}
                               placeholder="输入文本内容"
                               onClick={(e) => e.stopPropagation()}
@@ -4502,6 +4848,10 @@ export const TemplateGenPage: React.FC = () => {
                   if (templateFields.some(f => f.name === fieldName)) {
                     handleFieldClick(fieldName);
                     updateFieldValue(fieldName, assetUrl);
+                    // 点击素材替换是离散操作，立即提交快照
+                    setTimeout(() => {
+                      commitSnapshot('asset-click');
+                    }, 100);
                   }
                 }}
               />
