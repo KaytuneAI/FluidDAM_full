@@ -65,19 +65,19 @@ export const BannerBatchPage: React.FC = () => {
     editedValuesRef.current = editedValues;
   }, [editedValues]);
 
-  // 单图/多图模式状态
-  const [isMultiView, setIsMultiView] = useState<boolean>(false);
+  // 编辑/预览模式状态（false=编辑模式，true=预览模式）
+  const [isPreviewMode, setIsPreviewMode] = useState<boolean>(false);
   
-  // 2×2 模式下选中的 banner 索引（用于确定编辑哪个图）
+  // 预览模式下选中的 banner 索引（用于确定查看哪个图）
   const [selectedBannerIndex, setSelectedBannerIndex] = useState<number | null>(null);
   
-  // 获取当前活动的索引（单图用 currentIndex，多图用 selectedBannerIndex）
+  // 获取当前活动的索引（编辑模式用 currentIndex，预览模式用 selectedBannerIndex）
   const getActiveIndex = useCallback(() => {
-    if (isMultiView) {
+    if (isPreviewMode) {
       return selectedBannerIndex ?? currentIndex;
     }
     return currentIndex;
-  }, [isMultiView, selectedBannerIndex, currentIndex]);
+  }, [isPreviewMode, selectedBannerIndex, currentIndex]);
   
   // Undo/Redo 就绪开关（防止模板加载阶段触发 undo/redo）
   const undoReadyRef = useRef<boolean>(false);
@@ -372,6 +372,11 @@ export const BannerBatchPage: React.FC = () => {
 
   // 提交快照（和 TemplateGenPage 一样）
   const commitSnapshot = useCallback((reason: string) => {
+    // 预览模式下不提交快照
+    if (isPreviewMode) {
+      return;
+    }
+    
     const debugInfo = {
       reason,
       undoReady: undoReadyRef.current,
@@ -495,31 +500,93 @@ export const BannerBatchPage: React.FC = () => {
             undefined  // background 不需要恢复
           );
           
-          // 同步更新 editedValues 中的 transform 值，使其与快照一致
+          // 同步更新 editedValues 中的所有字段值，使其与快照一致
           // 这样 Effect 1 重新执行时不会覆盖恢复的状态
           const activeIndex = getActiveIndex();
-          const updatedEditedValues: Record<string, string> = { ...editedValuesRef.current[activeIndex] || {} };
+          const updatedEditedValues: Record<string, string> = {};
           
-          // 从 iframe 中读取所有图片的实际 transform 值（因为可能有多个图片）
+          // 获取原始 JSON 数据，用于比较
+          const originalData = jsonData[activeIndex] || {};
+          
+          // 从恢复后的 iframe 中读取所有字段的实际值，并与原始数据比较
           Object.entries(snapshot.elements).forEach(([fieldName, elementSnap]) => {
+            // 跳过价格字段，后面单独处理
+            if (fieldName === 'sec_price_int' || fieldName === 'sec_price_decimal') {
+              return;
+            }
+            
+            const elements = Array.from(iframeDoc2.querySelectorAll(`[data-field="${fieldName}"]`)) as HTMLElement[];
+            if (elements.length === 0) return;
+            
             if (elementSnap.tag === 'IMG') {
-              // 对于图片元素，需要找到所有相同字段的图片并更新对应的 transform
-              const imgElements = Array.from(iframeDoc2.querySelectorAll(`[data-field="${fieldName}"]`)) as HTMLImageElement[];
-              const imgs = imgElements.filter(el => el.tagName === 'IMG');
+              // 对于图片元素，读取 src 和 transform
+              const imgs = elements.filter(el => el.tagName === 'IMG') as HTMLImageElement[];
               
               imgs.forEach((img, imgIndex) => {
+                // 读取图片的 src
+                const actualSrc = img.src || '';
+                const originalSrc = originalData[fieldName];
+                
+                // 只有当 src 与原始 JSON 数据不同时，才保存到 editedValues
+                if (actualSrc && actualSrc !== originalSrc && String(originalSrc) !== actualSrc) {
+                  updatedEditedValues[fieldName] = actualSrc;
+                }
+                
+                // 读取 transform（transform 总是保存，因为原始数据中没有 transform）
                 const transformKey = `${fieldName}_transform_${imgIndex}`;
-                // 从恢复后的元素中读取实际的 transform 值
                 const actualTransform = img.style.transform || '';
                 if (actualTransform) {
                   updatedEditedValues[transformKey] = actualTransform;
-                } else {
-                  // 如果没有 transform，清除 editedValues 中的值
-                  delete updatedEditedValues[transformKey];
                 }
               });
+            } else {
+              // 对于文字元素，读取文本内容
+              const firstElement = elements[0];
+              if (firstElement) {
+                // 优先使用 textContent，如果没有则使用 innerText
+                const actualText = firstElement.textContent?.trim() || firstElement.innerText?.trim() || '';
+                const originalText = originalData[fieldName];
+                
+                // 只有当文本与原始 JSON 数据不同时，才保存到 editedValues
+                if (actualText && actualText !== originalText && String(originalText) !== actualText) {
+                  updatedEditedValues[fieldName] = actualText;
+                }
+              }
             }
           });
+          
+          // 特殊处理价格字段（价格字段有特殊的结构）
+          const priceEl = iframeDoc2.querySelector('[data-field-int]') as HTMLElement;
+          if (priceEl) {
+            const priceInt2 = priceEl.querySelector('.price-int-2') as HTMLElement;
+            const priceInt3 = priceEl.querySelector('.price-int-3') as HTMLElement;
+            const priceDecimal2 = priceEl.querySelector('.price-decimal-2') as HTMLElement;
+            const priceDecimal3 = priceEl.querySelector('.price-decimal-3') as HTMLElement;
+            
+            let intValue = '';
+            let decValue = '';
+            
+            if (priceInt2 || priceInt3 || priceDecimal2 || priceDecimal3) {
+              intValue = (priceInt2?.textContent || priceInt3?.textContent || '').trim();
+              decValue = (priceDecimal2?.textContent || priceDecimal3?.textContent || '').trim();
+            } else {
+              const signNode = priceEl.querySelector('.sign');
+              const decimalNode = priceEl.querySelector('.decimal');
+              intValue = signNode?.nextSibling?.nodeValue?.trim() || '';
+              decValue = decimalNode?.textContent?.trim() || '';
+            }
+            
+            // 只有当价格与原始 JSON 数据不同时，才保存到 editedValues
+            const originalInt = String(originalData.sec_price_int || '');
+            const originalDec = String(originalData.sec_price_decimal || '');
+            
+            if (intValue && intValue !== originalInt) {
+              updatedEditedValues['sec_price_int'] = intValue;
+            }
+            if (decValue && decValue !== originalDec) {
+              updatedEditedValues['sec_price_decimal'] = decValue;
+            }
+          }
           
           // 更新 editedValues
           setEditedValues(prev => ({
@@ -527,7 +594,9 @@ export const BannerBatchPage: React.FC = () => {
             [activeIndex]: updatedEditedValues,
           }));
           
-          console.log('[BannerBatch] 恢复快照完成，已同步 editedValues，transform 键数量:', 
+          console.log('[BannerBatch] 恢复快照完成，已同步 editedValues，字段数量:', 
+            Object.keys(updatedEditedValues).length,
+            'transform 键数量:', 
             Object.keys(updatedEditedValues).filter(k => k.includes('_transform_')).length);
         } catch (e) {
           console.error('[BannerBatch] 恢复元素失败:', e);
@@ -548,7 +617,7 @@ export const BannerBatchPage: React.FC = () => {
       isRestoringRef.current = false;
       console.log('[BannerBatch] isRestoringRef set to false (error)');
     }
-  }, []);
+  }, [jsonData, getActiveIndex]);
 
   // Undo/Redo effect（和 TemplateGenPage 一样）
   useEffect(() => {
@@ -583,6 +652,82 @@ export const BannerBatchPage: React.FC = () => {
     }
   }, [currentUndoRedo.currentState, currentUndoRedo.lastAction, currentUndoRedo.canUndo, currentUndoRedo.canRedo, restoreSnapshotFromHistory, getActiveIndex, undoRedoStateVersion]);
 
+  // 在恢复快照完成后，同步更新编辑栏中的字段值
+  useEffect(() => {
+    // 只在编辑模式下同步
+    if (isPreviewMode) return;
+    
+    // 检查是否刚刚完成恢复（通过监听 undo/redo 操作）
+    if (currentUndoRedo.lastAction === 'undo' || currentUndoRedo.lastAction === 'redo' || currentUndoRedo.lastAction === 'reset') {
+      if (!currentUndoRedo.currentState || !selectedField) return;
+      
+      // 延迟执行，确保快照恢复完成（restoreSnapshotFromHistory 内部有延迟约 500ms）
+      const timer = setTimeout(() => {
+        const activeIndex = getActiveIndex();
+        console.log('[BannerBatch] syncing selectedFieldValue after undo/redo, field:', selectedField, 'index:', activeIndex);
+        
+        // 内联同步逻辑，避免依赖顺序问题
+        let iframe: HTMLIFrameElement | null = null;
+        
+        // 编辑模式：使用预览 iframe
+        if (!isPreviewMode) {
+          iframe = previewIframeRef.current || iframeRef.current;
+        }
+        
+        if (!iframe) return;
+        
+        try {
+          const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+          if (!iframeDoc) return;
+          
+          const fieldName = selectedField;
+          
+          // 特殊处理价格字段
+          if (fieldName === 'sec_price_int' || fieldName === 'sec_price_decimal') {
+            const priceEl = iframeDoc.querySelector('[data-field-int]') as HTMLElement;
+            if (priceEl) {
+              const priceInt2 = priceEl.querySelector('.price-int-2') as HTMLElement;
+              const priceInt3 = priceEl.querySelector('.price-int-3') as HTMLElement;
+              const priceDecimal2 = priceEl.querySelector('.price-decimal-2') as HTMLElement;
+              const priceDecimal3 = priceEl.querySelector('.price-decimal-3') as HTMLElement;
+              
+              let intValue = '';
+              let decValue = '';
+              
+              if (priceInt2 || priceInt3 || priceDecimal2 || priceDecimal3) {
+                intValue = (priceInt2?.textContent || priceInt3?.textContent || '').trim();
+                decValue = (priceDecimal2?.textContent || priceDecimal3?.textContent || '').trim();
+              } else {
+                const signNode = priceEl.querySelector('.sign');
+                const decimalNode = priceEl.querySelector('.decimal');
+                intValue = signNode?.nextSibling?.nodeValue?.trim() || '';
+                decValue = decimalNode?.textContent?.trim() || '';
+              }
+              
+              setSelectedFieldValue(fieldName === 'sec_price_int' ? intValue : decValue);
+            }
+          } else {
+            // 普通字段处理
+            const element = iframeDoc.querySelector(`[data-field="${fieldName}"]`) as HTMLElement;
+            if (element) {
+              let value = "";
+              if (element.tagName === "IMG") {
+                value = (element as HTMLImageElement).src || "";
+              } else {
+                value = element.textContent?.trim() || element.innerText?.trim() || "";
+              }
+              setSelectedFieldValue(value);
+            }
+          }
+        } catch (e) {
+          console.warn("无法从 iframe 同步字段值:", e);
+        }
+      }, 600); // 等待恢复完成
+      
+      return () => clearTimeout(timer);
+    }
+  }, [currentUndoRedo.lastAction, currentUndoRedo.currentState, selectedField, getActiveIndex, isPreviewMode]);
+
   // 监听 2×2 预览网格宽度变化，用于计算缩放比例
   useLayoutEffect(() => {
     if (!gridRef.current) return;
@@ -594,7 +739,7 @@ export const BannerBatchPage: React.FC = () => {
     obs.observe(gridRef.current);
     
     return () => obs.disconnect();
-  }, [isMultiView]);
+  }, [isPreviewMode]);
 
   // 处理 HTML 文件上传
   const handleHtmlUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -709,7 +854,7 @@ export const BannerBatchPage: React.FC = () => {
         const finalJsonData = populateTemplateDataToJson(result.jsonData, templateData);
         setJsonData(finalJsonData);
         setCurrentIndex(0);
-        setSelectedBannerIndex(isMultiView ? 0 : null);
+        setSelectedBannerIndex(isPreviewMode ? 0 : null);
       } else {
         // 如果 ZIP 中没有 JSON 数据，也要清除旧的 JSON 数据
         setJsonData([]);
@@ -1049,7 +1194,7 @@ export const BannerBatchPage: React.FC = () => {
     let iframe: HTMLIFrameElement | null = null;
     
     // 多图模式：找到对应的 iframe
-    if (isMultiView) {
+    if (isPreviewMode) {
       const offset = dataIndex - currentIndex;
       if (offset >= 0 && offset < 4) {
         iframe = multiIframeRefs.current[offset];
@@ -1107,12 +1252,12 @@ export const BannerBatchPage: React.FC = () => {
     } catch (e) {
       console.warn("无法从 iframe 同步字段值:", e);
     }
-  }, [isMultiView, currentIndex]);
+  }, [isPreviewMode, currentIndex]);
   
   // 清除所有 iframe 中的字段高亮
   const clearAllFieldHighlights = useCallback(() => {
     // 清除多图模式下的所有 iframe
-    if (isMultiView) {
+    if (isPreviewMode) {
       multiIframeRefs.current.forEach((iframe) => {
         if (iframe) {
           try {
@@ -1141,7 +1286,7 @@ export const BannerBatchPage: React.FC = () => {
         // 忽略错误
       }
     }
-  }, [isMultiView]);
+  }, [isPreviewMode]);
   
   // 高亮 iframe 中的元素（根据 activeIndex 选择正确的 iframe，只高亮选中的那个）
   const highlightElementInIframe = useCallback((fieldName: string, dataIndex?: number) => {
@@ -1153,7 +1298,7 @@ export const BannerBatchPage: React.FC = () => {
     let iframe: HTMLIFrameElement | null = null;
     
     // 多图模式：找到对应的 iframe（只高亮选中的那个）
-    if (isMultiView) {
+    if (isPreviewMode) {
       const offset = activeIndex - currentIndex;
       if (offset >= 0 && offset < 4) {
         iframe = multiIframeRefs.current[offset];
@@ -1201,7 +1346,7 @@ export const BannerBatchPage: React.FC = () => {
           setSelectedFieldValue(fieldName === 'sec_price_int' ? intValue : decValue);
           
           // 只在单图模式下滚动，多图模式下 iframe 是缩放的，滚动会导致布局问题
-          if (!isMultiView) {
+          if (!isPreviewMode) {
           try {
               priceEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
           } catch (e) {
@@ -1228,7 +1373,7 @@ export const BannerBatchPage: React.FC = () => {
           setSelectedFieldValue(value);
 
           // 只在单图模式下滚动，多图模式下 iframe 是缩放的，滚动会导致布局问题
-          if (!isMultiView) {
+          if (!isPreviewMode) {
           try {
               element.scrollIntoView({ behavior: "smooth", block: "nearest" });
           } catch (e) {
@@ -1243,7 +1388,7 @@ export const BannerBatchPage: React.FC = () => {
       console.warn("无法访问 iframe 内容:", e);
       setSelectedFieldValue("无法访问预览内容");
     }
-  }, [isMultiView, currentIndex, getActiveIndex, clearAllFieldHighlights]);
+  }, [isPreviewMode, currentIndex, getActiveIndex, clearAllFieldHighlights]);
 
   // 处理选中 banner（2×2 模式下点击某个图）
   const handleSelectBanner = useCallback((index: number) => {
@@ -1280,7 +1425,7 @@ export const BannerBatchPage: React.FC = () => {
       e.stopPropagation(); // 阻止事件冒泡，避免触发其他点击事件
       
       // 如果是多图模式且提供了 dataIndex，先选中对应的 banner
-      if (isMultiView && dataIndex !== undefined) {
+      if (isPreviewMode && dataIndex !== undefined) {
         handleSelectBanner(dataIndex);
       }
       
@@ -1297,11 +1442,11 @@ export const BannerBatchPage: React.FC = () => {
         highlightElementInIframe(fieldName, activeIndex);
         syncSelectedFieldValueFromIframe(fieldName, activeIndex);
       }
-    } else if (isMultiView && dataIndex !== undefined) {
+    } else if (isPreviewMode && dataIndex !== undefined) {
       // 如果没有点击 data-field 元素，但在多图模式下，仍然选中对应的 banner
       handleSelectBanner(dataIndex);
     }
-  }, [isMultiView, selectedField, getActiveIndex, handleSelectBanner, highlightElementInIframe, syncSelectedFieldValueFromIframe, clearAllFieldHighlights, setSelectedField, setSelectedFieldValue]);
+  }, [isPreviewMode, selectedField, getActiveIndex, handleSelectBanner, highlightElementInIframe, syncSelectedFieldValueFromIframe, clearAllFieldHighlights, setSelectedField, setSelectedFieldValue]);
 
   // 处理字段点击
   const handleFieldClick = (fieldName: string) => {
@@ -1402,12 +1547,17 @@ export const BannerBatchPage: React.FC = () => {
 
   // 更新 iframe 中字段的值（根据 activeIndex 更新对应的 iframe）
   const updateFieldValue = useCallback((fieldName: string, newValue: string) => {
+    // 预览模式下不允许编辑
+    if (isPreviewMode) {
+      return;
+    }
+    
     const activeIndex = getActiveIndex();
     let targetIframe: HTMLIFrameElement | null = null;
     let targetIframeOffset: number | null = null;
     
     // 多图模式：找到对应的 iframe
-    if (isMultiView) {
+    if (isPreviewMode) {
       const offset = activeIndex - currentIndex;
       if (offset >= 0 && offset < 4) {
         targetIframe = multiIframeRefs.current[offset];
@@ -1429,7 +1579,7 @@ export const BannerBatchPage: React.FC = () => {
         const iframeDoc = targetIframe.contentDocument || targetIframe.contentWindow?.document;
         if (iframeDoc) {
           // 判断是否是选中的 iframe（多图模式下需要检查 offset）
-          const isSelectedIframe = isMultiView 
+          const isSelectedIframe = isPreviewMode 
             ? (targetIframeOffset !== null && selectedBannerIndex !== null && activeIndex === selectedBannerIndex)
             : true;
           updateFieldInDocument(iframeDoc, fieldName, newValue, true, isSelectedIframe);
@@ -1489,15 +1639,20 @@ export const BannerBatchPage: React.FC = () => {
     }));
     
     // 注意：不再在每次输入时提交快照，改为在 onBlur 或 Enter 时提交
-  }, [isMultiView, currentIndex, getActiveIndex, updateFieldInDocument, selectedBannerIndex, clearAllFieldHighlights]);
+  }, [isPreviewMode, currentIndex, getActiveIndex, updateFieldInDocument, selectedBannerIndex, clearAllFieldHighlights]);
 
   // 调整图片位置和缩放
   const adjustImageTransform = useCallback((fieldName: string, direction: 'up' | 'down' | 'left' | 'right' | 'zoomIn' | 'zoomOut') => {
+    // 预览模式下不允许编辑
+    if (isPreviewMode) {
+      return;
+    }
+    
     const activeIndex = getActiveIndex();
     let targetIframe: HTMLIFrameElement | null = null;
     
     // 多图模式：找到对应的 iframe
-    if (isMultiView) {
+    if (isPreviewMode) {
       const offset = activeIndex - currentIndex;
       if (offset >= 0 && offset < 4) {
         targetIframe = multiIframeRefs.current[offset];
@@ -1635,10 +1790,13 @@ export const BannerBatchPage: React.FC = () => {
     } catch (e) {
       console.warn('调整图片变换失败:', e);
     }
-  }, [isMultiView, currentIndex, getActiveIndex, multiIframeRefs, previewIframeRef, iframeRef, commitSnapshot]);
+  }, [isPreviewMode, currentIndex, getActiveIndex, multiIframeRefs, previewIframeRef, iframeRef, commitSnapshot]);
 
   // 为选中的图片字段添加拖拽和缩放功能
   useEffect(() => {
+    // 预览模式下不设置拖拽和缩放功能
+    if (isPreviewMode) return;
+    
     if (!selectedField) return;
     
     const isImageField = selectedField.includes("_src") || selectedField.includes("image") || selectedField.includes("img");
@@ -1647,16 +1805,9 @@ export const BannerBatchPage: React.FC = () => {
     // 获取所有需要设置事件监听器的 iframe
     const iframesToSetup: HTMLIFrameElement[] = [];
     
-    if (isMultiView) {
-      // 多图模式：为所有可见的 iframe 设置
-      multiIframeRefs.current.forEach(iframe => {
-        if (iframe) iframesToSetup.push(iframe);
-      });
-    } else {
-      // 单图模式：只设置预览 iframe
-      if (previewIframeRef.current) {
-        iframesToSetup.push(previewIframeRef.current);
-      }
+    // 编辑模式：只设置预览 iframe
+    if (previewIframeRef.current) {
+      iframesToSetup.push(previewIframeRef.current);
     }
     
     if (iframesToSetup.length === 0) return;
@@ -1669,7 +1820,7 @@ export const BannerBatchPage: React.FC = () => {
         // 计算当前 iframe 对应的数据索引
         // 使用 ref 获取最新的 currentIndex，避免闭包捕获过时值
         const latestCurrentIndex = currentIndexRef.current;
-        const dataIndex = isMultiView ? (latestCurrentIndex + iframeIndex) : latestCurrentIndex;
+        const dataIndex = latestCurrentIndex;
 
         // 找到所有具有相同 data-field 的图片
         const imgs = Array.from(iframeDoc.querySelectorAll(`[data-field="${selectedField}"]`)) as HTMLImageElement[];
@@ -1905,7 +2056,7 @@ export const BannerBatchPage: React.FC = () => {
         }
       });
     };
-  }, [selectedField, currentIndex, isMultiView, getActiveIndex, multiIframeRefs, previewIframeRef, iframeRef, iframeSize, setEditedValues, commitSnapshot]);
+  }, [selectedField, currentIndex, isPreviewMode, getActiveIndex, multiIframeRefs, previewIframeRef, iframeRef, iframeSize, setEditedValues, commitSnapshot]);
 
   // 清除 CSS
   const handleClearCss = () => {
@@ -1936,7 +2087,7 @@ export const BannerBatchPage: React.FC = () => {
       
       setJsonData(finalJsonData);
       setCurrentIndex(0);
-      setSelectedBannerIndex(isMultiView ? 0 : null);
+      setSelectedBannerIndex(isPreviewMode ? 0 : null);
       setSuccess(`成功加载 ${finalJsonData.length} 条数据`);
       // 应用第一条数据到预览
       if (finalJsonData.length > 0) {
@@ -1980,7 +2131,7 @@ export const BannerBatchPage: React.FC = () => {
 
   // 多图模式：更新4个iframe的数据
   useEffect(() => {
-    if (isMultiView && jsonData.length > 0 && htmlContent) {
+    if (isPreviewMode && jsonData.length > 0 && htmlContent) {
       // 如果还没有选中任何 banner，默认选中左上角（currentIndex）
       if (selectedBannerIndex === null) {
         setSelectedBannerIndex(currentIndex);
@@ -1999,11 +2150,11 @@ export const BannerBatchPage: React.FC = () => {
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [isMultiView, jsonData, currentIndex, htmlContent, applyJsonDataToMultiIframeWrapper, selectedBannerIndex]);
+  }, [isPreviewMode, jsonData, currentIndex, htmlContent, applyJsonDataToMultiIframeWrapper, selectedBannerIndex]);
 
   // Effect 1: 数据应用 (Data Application) - 仅负责在数据变化时应用数据到 iframe
   useEffect(() => {
-    if (!isMultiView && jsonData.length > 0 && currentIndex >= 0 && currentIndex < jsonData.length) {
+    if (!isPreviewMode && jsonData.length > 0 && currentIndex >= 0 && currentIndex < jsonData.length) {
       // 模板加载阶段（undoReadyRef.current === false）不执行任何操作，等待 iframe 加载完成
       if (!undoReadyRef.current) {
         return;
@@ -2068,7 +2219,7 @@ export const BannerBatchPage: React.FC = () => {
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [jsonData, currentIndex, applyJsonDataToIframe, htmlContent, cssContent, isMultiView, getActiveIndex, iframeSize, commitSnapshot]);
+  }, [jsonData, currentIndex, applyJsonDataToIframe, htmlContent, cssContent, isPreviewMode, getActiveIndex, iframeSize, commitSnapshot]);
 
   // 自动保存数据到 localStorage（防抖，只保存关键信息）
   useEffect(() => {
@@ -2091,7 +2242,7 @@ export const BannerBatchPage: React.FC = () => {
 
   // 切换到上一条
   const handlePrev = () => {
-    const step = isMultiView ? 4 : 1;
+    const step = isPreviewMode ? 4 : 1;
     const activeIndex = getActiveIndex();
     
     if (currentIndex >= step) {
@@ -2108,7 +2259,7 @@ export const BannerBatchPage: React.FC = () => {
       const newIndex = currentIndex - step;
       setCurrentIndex(newIndex);
       // 多图模式：默认选中左上角那张
-      if (isMultiView) {
+      if (isPreviewMode) {
         setSelectedBannerIndex(newIndex);
       }
     } else if (currentIndex > 0) {
@@ -2124,7 +2275,7 @@ export const BannerBatchPage: React.FC = () => {
       }
       setCurrentIndex(0);
       // 多图模式：默认选中左上角那张
-      if (isMultiView) {
+      if (isPreviewMode) {
         setSelectedBannerIndex(0);
       }
     }
@@ -2132,8 +2283,8 @@ export const BannerBatchPage: React.FC = () => {
 
   // 切换到下一条
   const handleNext = () => {
-    const step = isMultiView ? 4 : 1;
-    const maxIndex = isMultiView 
+    const step = isPreviewMode ? 4 : 1;
+    const maxIndex = isPreviewMode 
       ? Math.max(0, jsonData.length - 4)  // 多图模式：确保最后4个都能显示
       : jsonData.length - 1;
     const activeIndex = getActiveIndex();
@@ -2152,7 +2303,7 @@ export const BannerBatchPage: React.FC = () => {
       const newIndex = Math.min(currentIndex + step, maxIndex);
       setCurrentIndex(newIndex);
       // 多图模式：默认选中左上角那张
-      if (isMultiView) {
+      if (isPreviewMode) {
         setSelectedBannerIndex(newIndex);
       }
     }
@@ -2679,10 +2830,10 @@ export const BannerBatchPage: React.FC = () => {
   
   // 当 selectedBannerIndex 变化时，同步字段值（如果已选中字段）
   useEffect(() => {
-    if (isMultiView && selectedBannerIndex !== null && selectedField) {
+    if (isPreviewMode && selectedBannerIndex !== null && selectedField) {
       syncSelectedFieldValueFromIframe(selectedField, selectedBannerIndex);
     }
-  }, [isMultiView, selectedBannerIndex, selectedField, syncSelectedFieldValueFromIframe]);
+  }, [isPreviewMode, selectedBannerIndex, selectedField, syncSelectedFieldValueFromIframe]);
 
   // 缓存单图模式的 srcDoc，避免切换字段时重新计算导致 iframe 刷新
   const singleViewSrcDoc = useMemo(() => {
@@ -2699,8 +2850,8 @@ export const BannerBatchPage: React.FC = () => {
       <div className="banner-batch-content">
         {/* 左侧预览区 */}
         <div className="banner-preview-section">
-          {!isMultiView ? (
-            // 单图模式
+          {!isPreviewMode ? (
+            // 编辑模式：单图显示
             <div 
               className={`banner-preview-wrapper ${!htmlContent ? 'clickable-upload' : ''}`}
               onClick={handlePreviewAreaClick}
@@ -2762,7 +2913,7 @@ export const BannerBatchPage: React.FC = () => {
               )}
             </div>
           ) : (
-            // 多图模式：4个画布（2x2布局）
+            // 预览模式：4个画布（2x2布局）
             <div className={`banner-preview-wrapper multi-mode`}>
               <div className="multi-preview-grid" ref={gridRef}>
                 {[0, 1, 2, 3].map((idx) => {
@@ -2771,7 +2922,7 @@ export const BannerBatchPage: React.FC = () => {
                   // 如果没有数据，不显示（而不是显示 currentIndex 的数据）
                   const displayIndex = hasData ? dataIndex : -1;
                   const activeIndex = getActiveIndex();
-                  const isSelectedItem = isMultiView && selectedBannerIndex !== null && displayIndex === activeIndex && displayIndex >= 0;
+                  const isSelectedItem = isPreviewMode && selectedBannerIndex !== null && displayIndex === activeIndex && displayIndex >= 0;
                   
                   // 计算缩放比例
                   const templateWidth = iframeSize?.width ?? 750;
@@ -2902,29 +3053,30 @@ export const BannerBatchPage: React.FC = () => {
                   disabled={currentIndex === 0}
                   className="btn btn-secondary"
                 >
-                  ← {isMultiView ? '上4条' : '上一条'}
+                  ← {isPreviewMode ? '上4条' : '上一条'}
                 </button>
                 <span className="preview-index">
-                  {isMultiView ? (
+                  {isPreviewMode ? (
                     <>
                       {currentIndex + 1}-{Math.min(currentIndex + 4, jsonData.length)} / {jsonData.length}
-                      <span className="preview-mode-badge">多图</span>
+                      <span className="preview-mode-badge">预览</span>
                     </>
                   ) : (
                     <>
                       {currentIndex + 1} / {jsonData.length}
+                      <span className="preview-mode-badge">编辑</span>
                     </>
                   )}
                 </span>
                 <button
                   onClick={handleNext}
-                  disabled={isMultiView 
+                  disabled={isPreviewMode 
                     ? currentIndex >= Math.max(0, jsonData.length - 4)
                     : currentIndex === jsonData.length - 1
                   }
                   className="btn btn-secondary"
                 >
-                  {isMultiView ? '下4条' : '下一条'} →
+                  {isPreviewMode ? '下4条' : '下一条'} →
                 </button>
               </div>
             </div>
@@ -2977,31 +3129,32 @@ export const BannerBatchPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* 单图/多图切换（右侧一半） */}
+              {/* 编辑/预览模式切换（右侧一半） */}
               <div className="template-view-mode-section">
                 <h3>预览模式</h3>
                 <div className="view-mode-toggle">
                   <button
-                    className={`view-mode-btn ${!isMultiView ? 'active' : ''}`}
+                    className={`view-mode-btn ${!isPreviewMode ? 'active' : ''}`}
                     onClick={() => {
-                      // 多图 → 单图：同步 currentIndex
-                      if (isMultiView) {
+                      // 预览 → 编辑：同步 currentIndex
+                      if (isPreviewMode) {
                         setCurrentIndex(selectedBannerIndex ?? currentIndex);
                         setSelectedBannerIndex(null);
                       }
-                      setIsMultiView(false);
+                      setIsPreviewMode(false);
                     }}
-                    title="单图模式"
+                    title="编辑模式"
                   >
                     <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <rect x="3" y="3" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+                      <path d="M11.5 3.5L16.5 8.5L11.5 13.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                      <path d="M3.5 3.5V16.5H16.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
                     </svg>
                   </button>
                   <button
-                    className={`view-mode-btn ${isMultiView ? 'active' : ''}`}
+                    className={`view-mode-btn ${isPreviewMode ? 'active' : ''}`}
                     onClick={() => {
-                      // 单图 → 多图：调整 currentIndex 确保能显示尽可能多的产品
-                      if (!isMultiView) {
+                      // 编辑 → 预览：调整 currentIndex 确保能显示尽可能多的产品
+                      if (!isPreviewMode) {
                         // 如果数据不足4个，从0开始显示
                         if (jsonData.length <= 4) {
                           setCurrentIndex(0);
@@ -3014,9 +3167,9 @@ export const BannerBatchPage: React.FC = () => {
                           setSelectedBannerIndex(adjustedIndex);
                         }
                       }
-                      setIsMultiView(true);
+                      setIsPreviewMode(true);
                     }}
-                    title="多图模式（2x2）"
+                    title="预览模式（2x2）"
                   >
                     <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
                       <rect x="2" y="2" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.5" fill="none"/>
@@ -3182,7 +3335,7 @@ export const BannerBatchPage: React.FC = () => {
           <div className="control-section">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
               <h3 style={{ margin: 0 }}>本模板可编辑字段</h3>
-              {templateFields.length > 0 && (
+              {templateFields.length > 0 && !isPreviewMode && (
                 <UndoRedoButtons
                   onUndo={currentUndoRedo.undo}
                   onRedo={currentUndoRedo.redo}
@@ -3208,8 +3361,10 @@ export const BannerBatchPage: React.FC = () => {
                     >
                       <div
                         className="template-field-header"
-                        onClick={() => handleFieldClick(f.name)}
-                        style={{ cursor: "pointer" }}
+                        onClick={() => {
+                          handleFieldClick(f.name);
+                        }}
+                        style={{ cursor: "pointer", opacity: isPreviewMode ? 0.8 : 1 }}
                       >
                         <strong>{f.label || f.name}</strong>
                         <span style={{ marginLeft: 8, color: "#999", fontSize: 12 }}>
@@ -3218,22 +3373,108 @@ export const BannerBatchPage: React.FC = () => {
                       </div>
                       {isSelected && (
                         <div className="template-field-editor">
+                          {isPreviewMode ? (
+                            <>
+                              {!isImageField && <div className="field-value-label">当前值：</div>}
+                              {isImageField ? (
+                                <div 
+                                  style={{ position: 'relative' }}
+                                  title="预览模式下无法编辑"
+                                >
+                                  {selectedFieldValue ? (
+                                    <div style={{ 
+                                      padding: '8px', 
+                                      border: '1px solid #ddd', 
+                                      borderRadius: '4px',
+                                      backgroundColor: '#f9f9f9',
+                                      textAlign: 'center'
+                                    }}>
+                                      <img 
+                                        src={selectedFieldValue} 
+                                        alt={f.label || f.name}
+                                        style={{ 
+                                          maxWidth: '100%', 
+                                          maxHeight: '200px',
+                                          objectFit: 'contain'
+                                        }}
+                                      />
+                                      {!selectedFieldValue.startsWith('data:image') && (
+                                        <div style={{ 
+                                          marginTop: '8px', 
+                                          fontSize: '11px', 
+                                          color: '#999',
+                                          wordBreak: 'break-all'
+                                        }}>
+                                          {selectedFieldValue}
+                                        </div>
+                                      )}
+                                      {selectedFieldValue.startsWith('data:image') && (
+                                        <div style={{ 
+                                          marginTop: '8px', 
+                                          fontSize: '11px', 
+                                          color: '#999'
+                                        }}>
+                                          [Base64 图片数据]
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div style={{ 
+                                      padding: '8px', 
+                                      color: '#999', 
+                                      fontSize: '12px',
+                                      textAlign: 'center',
+                                      border: '1px dashed #ddd',
+                                      borderRadius: '4px'
+                                    }}>
+                                      暂无图片
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <input
+                                  type="text"
+                                  className="field-value-input"
+                                  value={selectedFieldValue}
+                                  disabled={true}
+                                  readOnly={true}
+                                  title="预览模式下无法编辑"
+                                  style={{
+                                    backgroundColor: '#f5f5f5',
+                                    cursor: 'not-allowed',
+                                    opacity: 0.8
+                                  }}
+                                  placeholder="暂无内容"
+                                />
+                              )}
+                            </>
+                          ) : (
+                            <>
                           {!isImageField && <div className="field-value-label">当前值：</div>}
                           {isImageField ? (
                             <>
                               <div 
                                 className="image-drop-zone"
                                 onDragOver={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  e.currentTarget.classList.add('drag-over');
+                                  if (!isPreviewMode) {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    e.currentTarget.classList.add('drag-over');
+                                  }
                                 }}
                                 onDragLeave={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  e.currentTarget.classList.remove('drag-over');
+                                  if (!isPreviewMode) {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    e.currentTarget.classList.remove('drag-over');
+                                  }
                                 }}
                                 onDrop={(e) => {
+                                  if (isPreviewMode) {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    return;
+                                  }
                                   e.preventDefault();
                                   e.stopPropagation();
                                   e.currentTarget.classList.remove('drag-over');
@@ -3270,7 +3511,9 @@ export const BannerBatchPage: React.FC = () => {
                                   <button
                                     className="image-control-btn dpad-btn dpad-up"
                                     title="向上 (W)"
+                                    disabled={isPreviewMode}
                                     onClick={(e) => {
+                                      if (isPreviewMode) return;
                                       e.stopPropagation();
                                       adjustImageTransform(f.name, 'up');
                                     }}
@@ -3281,7 +3524,9 @@ export const BannerBatchPage: React.FC = () => {
                                     <button
                                       className="image-control-btn dpad-btn dpad-left"
                                       title="向左 (A)"
+                                      disabled={isPreviewMode}
                                       onClick={(e) => {
+                                        if (isPreviewMode) return;
                                         e.stopPropagation();
                                         adjustImageTransform(f.name, 'left');
                                       }}
@@ -3291,7 +3536,9 @@ export const BannerBatchPage: React.FC = () => {
                                     <button
                                       className="image-control-btn dpad-btn dpad-down"
                                       title="向下 (S)"
+                                      disabled={isPreviewMode}
                                       onClick={(e) => {
+                                        if (isPreviewMode) return;
                                         e.stopPropagation();
                                         adjustImageTransform(f.name, 'down');
                                       }}
@@ -3301,7 +3548,9 @@ export const BannerBatchPage: React.FC = () => {
                                     <button
                                       className="image-control-btn dpad-btn dpad-right"
                                       title="向右 (D)"
+                                      disabled={isPreviewMode}
                                       onClick={(e) => {
+                                        if (isPreviewMode) return;
                                         e.stopPropagation();
                                         adjustImageTransform(f.name, 'right');
                                       }}
@@ -3315,7 +3564,9 @@ export const BannerBatchPage: React.FC = () => {
                                   <button
                                     className="image-control-btn zoom-btn zoom-in"
                                     title="放大"
+                                    disabled={isPreviewMode}
                                     onClick={(e) => {
+                                      if (isPreviewMode) return;
                                       e.stopPropagation();
                                       adjustImageTransform(f.name, 'zoomIn');
                                     }}
@@ -3325,7 +3576,9 @@ export const BannerBatchPage: React.FC = () => {
                                   <button
                                     className="image-control-btn zoom-btn zoom-out"
                                     title="缩小"
+                                    disabled={isPreviewMode}
                                     onClick={(e) => {
+                                      if (isPreviewMode) return;
                                       e.stopPropagation();
                                       adjustImageTransform(f.name, 'zoomOut');
                                     }}
@@ -3340,18 +3593,22 @@ export const BannerBatchPage: React.FC = () => {
                               type="text"
                               className="field-value-input"
                               value={selectedFieldValue}
+                              disabled={isPreviewMode}
                               onChange={(e) => {
+                                if (isPreviewMode) return;
                                 const newValue = e.target.value;
                                 setSelectedFieldValue(newValue);
                                 updateFieldValue(f.name, newValue);
                               }}
                               onBlur={() => {
+                                if (isPreviewMode) return;
                                 // 失去焦点时提交快照
                                 if (undoReadyRef.current) {
                                   commitSnapshot('text-field-blur');
                                 }
                               }}
                               onKeyDown={(e) => {
+                                if (isPreviewMode) return;
                                 // 按 Enter 键时提交快照
                                 if (e.key === 'Enter') {
                                   e.preventDefault();
@@ -3365,6 +3622,8 @@ export const BannerBatchPage: React.FC = () => {
                               placeholder="输入文本内容"
                               onClick={(e) => e.stopPropagation()}
                             />
+                          )}
+                            </>
                           )}
                         </div>
                       )}

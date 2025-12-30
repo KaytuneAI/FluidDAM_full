@@ -22,7 +22,7 @@ export function getApiBaseUrl(): string {
     
     console.log('[getApiBaseUrl] 开发环境，当前端口:', port);
     
-    // 如果通过统一入口（端口 3000）访问，使用相对路径让 vite 代理转发
+    // 如果通过统一入口（端口 3000）访问，使用相对路径让 vite 代理转发到统一后端（3001）
     if (port === '3000' || port === '') {
       console.log('[getApiBaseUrl] 使用统一入口，返回相对路径 /api');
       return '/api'; // 使用相对路径，会被 vite proxy 转发到 3001
@@ -57,7 +57,7 @@ export function getApiBaseUrl(): string {
     return '/api';
   }
   
-  // 生产环境：统一使用 3001（统一后端）
+  // 默认使用 3001（统一后端）
   return `${protocol}//${hostname}:3001/api`;
 }
 
