@@ -30,6 +30,8 @@ import {
 } from "../../utils/persistence";
 import { navigateToFluidDAM } from "../../utils/navigation";
 import { shareBannerZip } from "../../utils/apiUtils";
+import { useUndoRedo } from "../../utils/useUndoRedo";
+import { UndoRedoButtons } from "../../components/UndoRedoButtons";
 import "./BannerBatchPage.css";
 
 export const BannerBatchPage: React.FC = () => {
@@ -53,6 +55,38 @@ export const BannerBatchPage: React.FC = () => {
   const [shareUrl, setShareUrl] = useState<string>("");
   // 保存每个数据索引的编辑值：{ [index]: { [fieldName]: value } }
   const [editedValues, setEditedValues] = useState<Record<number, Record<string, string>>>({});
+  
+  // 使用 ref 存储 editedValues 的最新值，避免 Effect 1 在 editedValues 变化时触发
+  const editedValuesRef = useRef<Record<number, Record<string, string>>>({});
+  
+  // 同步 editedValues 到 ref
+  useEffect(() => {
+    editedValuesRef.current = editedValues;
+  }, [editedValues]);
+
+  // Undo/Redo 就绪开关（防止模板加载阶段触发 undo/redo）
+  const undoReadyRef = useRef<boolean>(false);
+  
+  // 防止多次初始化历史记录（避免重复 reset）
+  const didInitHistoryRef = useRef<boolean>(false);
+
+  // Undo/Redo Hook - 管理editedValues的历史记录（不传初始状态，避免影响模板初始化）
+  const {
+    currentState: editedValuesHistoryState,
+    pushState: pushEditedValuesState,
+    undo: undoEditedValues,
+    redo: redoEditedValues,
+    canUndo,
+    canRedo,
+    reset: resetEditedValuesHistory,
+  } = useUndoRedo<Record<number, Record<string, string>>>(undefined, 50);
+
+  // 当editedValues历史状态变化时，恢复状态（只在 undo ready 时应用）
+  useEffect(() => {
+    if (undoReadyRef.current && editedValuesHistoryState !== null && editedValuesHistoryState !== undefined) {
+      setEditedValues(editedValuesHistoryState);
+    }
+  }, [editedValuesHistoryState]);
   
   // 单图/多图模式状态
   const [isMultiView, setIsMultiView] = useState<boolean>(false);
@@ -1334,6 +1368,7 @@ export const BannerBatchPage: React.FC = () => {
         let startTranslateX = 0;
         let startTranslateY = 0;
         let currentScale = 1;
+        let wheelDebounceTimer: NodeJS.Timeout | null = null;
 
         const parseTransform = (transform: string) => {
           let tx = 0, ty = 0, s = 1;
@@ -1419,6 +1454,15 @@ export const BannerBatchPage: React.FC = () => {
         };
 
         const handleMouseUp = () => {
+          if (isDragging) {
+            // 拖拽结束时记录状态（只在 undo ready 时记录）
+            if (undoReadyRef.current) {
+              setEditedValues(prev => {
+                pushEditedValuesState(prev);
+                return prev;
+              });
+            }
+          }
           isDragging = false;
           draggedImg = null;
           draggedImgIndex = -1;
@@ -1443,6 +1487,22 @@ export const BannerBatchPage: React.FC = () => {
 
           // 只对当前滚轮的图片应用缩放
           applyTransform(img, parsed.tx, parsed.ty, newScale);
+
+          // 清除之前的定时器
+          if (wheelDebounceTimer) {
+            clearTimeout(wheelDebounceTimer);
+          }
+
+          // 设置新的定时器，在滚轮停止300ms后记录状态（只在 undo ready 时记录）
+          wheelDebounceTimer = setTimeout(() => {
+            if (undoReadyRef.current) {
+              setEditedValues(prev => {
+                pushEditedValuesState(prev);
+                return prev;
+              });
+            }
+            wheelDebounceTimer = null;
+          }, 300);
         };
 
         // 添加事件监听器
@@ -1479,6 +1539,12 @@ export const BannerBatchPage: React.FC = () => {
 
         // 清理函数
         return () => {
+          // 清除滚轮防抖定时器
+          if (wheelDebounceTimer) {
+            clearTimeout(wheelDebounceTimer);
+            wheelDebounceTimer = null;
+          }
+
           imageElements.forEach(img => {
             img.removeEventListener('mousedown', handleMouseDown);
             img.style.cursor = '';
@@ -1526,7 +1592,7 @@ export const BannerBatchPage: React.FC = () => {
         }
       });
     };
-  }, [selectedField, currentIndex, isMultiView, getActiveIndex, multiIframeRefs, previewIframeRef, iframeRef, iframeSize, setEditedValues]);
+  }, [selectedField, currentIndex, isMultiView, getActiveIndex, multiIframeRefs, previewIframeRef, iframeRef, iframeSize, setEditedValues, pushEditedValuesState]);
 
   // 清除 CSS
   const handleClearCss = () => {
@@ -1585,16 +1651,19 @@ export const BannerBatchPage: React.FC = () => {
   const applyJsonDataToIframe = useCallback((data: BannerData, index: number) => {
     if (!htmlContent) return;
     
+    // 使用 ref 获取最新的 editedValues，避免依赖 editedValues 导致 Effect 1 频繁触发
+    const currentEditedValues = editedValuesRef.current;
+    
     // 应用到导出 iframe（用于批量生成）
     if (iframeRef.current) {
-      applyJsonDataToIframeUtil(iframeRef.current, data, index, editedValues);
+      applyJsonDataToIframeUtil(iframeRef.current, data, index, currentEditedValues);
     }
     
     // 应用到预览 iframe（用于单图预览）
     if (previewIframeRef.current) {
-      applyJsonDataToIframeUtil(previewIframeRef.current, data, index, editedValues);
+      applyJsonDataToIframeUtil(previewIframeRef.current, data, index, currentEditedValues);
     }
-  }, [htmlContent, editedValues]);
+  }, [htmlContent]);
 
   // 多图模式：更新4个iframe的数据
   useEffect(() => {
@@ -1622,10 +1691,17 @@ export const BannerBatchPage: React.FC = () => {
   // Effect 1: 数据应用 (Data Application) - 仅负责在数据变化时应用数据到 iframe
   useEffect(() => {
     if (!isMultiView && jsonData.length > 0 && currentIndex >= 0 && currentIndex < jsonData.length) {
+      // 模板加载阶段（undoReadyRef.current === false）不执行任何操作，等待 iframe 加载完成
+      if (!undoReadyRef.current) {
+        return;
+      }
+      
       const timer = setTimeout(() => {
         // 如果是第一个索引（索引0），且是空对象，且没有编辑的值，重置 iframe 到原始 HTML
         const isEmptyTemplate = currentIndex === 0 && Object.keys(jsonData[currentIndex]).length === 0;
-        const hasEdits = editedValues[0] && Object.keys(editedValues[0]).length > 0;
+        // 使用 ref 获取最新的 editedValues，避免依赖 editedValues 导致 Effect 1 频繁触发
+        const currentEditedValues = editedValuesRef.current;
+        const hasEdits = currentEditedValues[0] && Object.keys(currentEditedValues[0]).length > 0;
         
         if (isEmptyTemplate && !hasEdits) {
           // 空模板且没有编辑，重置到原始 HTML
@@ -1649,7 +1725,7 @@ export const BannerBatchPage: React.FC = () => {
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [jsonData, currentIndex, applyJsonDataToIframe, editedValues, htmlContent, cssContent, isMultiView]);
+  }, [jsonData, currentIndex, applyJsonDataToIframe, htmlContent, cssContent, isMultiView]);
 
   // 自动保存数据到 localStorage（防抖，只保存关键信息）
   useEffect(() => {
@@ -2150,6 +2226,9 @@ export const BannerBatchPage: React.FC = () => {
   // 当 HTML 或 CSS 内容变化时，调整 iframe 尺寸，并同步更新导出 iframe
   useEffect(() => {
     if (htmlContent) {
+      // 模板内容变化时，重置 undo ready 状态（等待 iframe 重新加载）
+      undoReadyRef.current = false;
+      
       // 同步更新导出 iframe 的内容
       if (iframeRef.current) {
         iframeRef.current.srcdoc = buildSrcDoc(htmlContent, cssContent);
@@ -2172,6 +2251,8 @@ export const BannerBatchPage: React.FC = () => {
         clearTimeout(timer2);
       };
     } else {
+      // 模板被清除时，也重置 undo ready
+      undoReadyRef.current = false;
       setIframeSize(null);
       setSelectedField(null);
       setSelectedFieldValue("");
@@ -2253,6 +2334,8 @@ export const BannerBatchPage: React.FC = () => {
                   }
                   onLoad={(e) => {
                     adjustIframeSize();
+                    // 模板和 iframe 完全 ready 后，允许 undo/redo
+                    undoReadyRef.current = true;
                     // 添加点击事件监听，点击 data-field 元素时自动选中字段
                     try {
                       const iframe = e.currentTarget;
@@ -2340,6 +2423,8 @@ export const BannerBatchPage: React.FC = () => {
                                 const iframe = e.currentTarget;
                                 if (idx === 0) {
                                   adjustIframeSize();
+                                  // 多图模式下，第一个 iframe 加载完成后允许 undo/redo
+                                  undoReadyRef.current = true;
                                 }
                                 
                                 // 给 iframe 内部添加点击事件
@@ -2688,7 +2773,17 @@ export const BannerBatchPage: React.FC = () => {
 
           {/* 模板字段列表 */}
           <div className="control-section">
-            <h3>本模板可编辑字段</h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h3 style={{ margin: 0 }}>本模板可编辑字段</h3>
+              {templateFields.length > 0 && (
+                <UndoRedoButtons
+                  onUndo={undoEditedValues}
+                  onRedo={redoEditedValues}
+                  canUndo={canUndo}
+                  canRedo={canRedo}
+                />
+              )}
+            </div>
             {templateFields.length === 0 ? (
               <p style={{ color: "#999", fontSize: 12 }}>
                 尚未检测到任何 data-field
