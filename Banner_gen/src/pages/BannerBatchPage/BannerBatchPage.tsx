@@ -32,6 +32,7 @@ import { navigateToFluidDAM } from "../../utils/navigation";
 import { shareBannerZip } from "../../utils/apiUtils";
 import { useUndoRedo } from "../../utils/useUndoRedo";
 import { UndoRedoButtons } from "../../components/UndoRedoButtons";
+import { captureSnapshot, restoreSnapshot, type TemplateSnapshot } from "../TemplateGenPage/snapshot";
 import "./BannerBatchPage.css";
 
 export const BannerBatchPage: React.FC = () => {
@@ -64,35 +65,138 @@ export const BannerBatchPage: React.FC = () => {
     editedValuesRef.current = editedValues;
   }, [editedValues]);
 
-  // Undo/Redo 就绪开关（防止模板加载阶段触发 undo/redo）
-  const undoReadyRef = useRef<boolean>(false);
-  
-  // 防止多次初始化历史记录（避免重复 reset）
-  const didInitHistoryRef = useRef<boolean>(false);
-
-  // Undo/Redo Hook - 管理editedValues的历史记录（不传初始状态，避免影响模板初始化）
-  const {
-    currentState: editedValuesHistoryState,
-    pushState: pushEditedValuesState,
-    undo: undoEditedValues,
-    redo: redoEditedValues,
-    canUndo,
-    canRedo,
-    reset: resetEditedValuesHistory,
-  } = useUndoRedo<Record<number, Record<string, string>>>(undefined, 50);
-
-  // 当editedValues历史状态变化时，恢复状态（只在 undo ready 时应用）
-  useEffect(() => {
-    if (undoReadyRef.current && editedValuesHistoryState !== null && editedValuesHistoryState !== undefined) {
-      setEditedValues(editedValuesHistoryState);
-    }
-  }, [editedValuesHistoryState]);
-  
   // 单图/多图模式状态
   const [isMultiView, setIsMultiView] = useState<boolean>(false);
   
   // 2×2 模式下选中的 banner 索引（用于确定编辑哪个图）
   const [selectedBannerIndex, setSelectedBannerIndex] = useState<number | null>(null);
+  
+  // 获取当前活动的索引（单图用 currentIndex，多图用 selectedBannerIndex）
+  const getActiveIndex = useCallback(() => {
+    if (isMultiView) {
+      return selectedBannerIndex ?? currentIndex;
+    }
+    return currentIndex;
+  }, [isMultiView, selectedBannerIndex, currentIndex]);
+  
+  // Undo/Redo 就绪开关（防止模板加载阶段触发 undo/redo）
+  const undoReadyRef = useRef<boolean>(false);
+  const isRestoringRef = useRef<boolean>(false);
+  // 每个产品独立的初始快照提交标记：{ [productIndex]: boolean }
+  const initialSnapshotCommittedRef = useRef<Record<number, boolean>>({});
+  
+  // 每个产品独立的 Undo/Redo 状态：{ [productIndex]: { history, currentIndex, lastAction } }
+  type UndoRedoState = {
+    history: TemplateSnapshot[];
+    currentIndex: number;
+    lastAction: 'push' | 'undo' | 'redo' | 'reset' | null;
+  };
+  const undoRedoHistoryRef = useRef<Map<number, UndoRedoState>>(new Map());
+  
+  // 获取当前产品的 undo/redo 状态（如果不存在则创建）
+  const getCurrentUndoRedoState = useCallback((): UndoRedoState => {
+    const activeIndex = getActiveIndex();
+    if (!undoRedoHistoryRef.current.has(activeIndex)) {
+      // 为新产品创建空的 undo/redo 状态
+      const newState: UndoRedoState = {
+        history: [],
+        currentIndex: -1,
+        lastAction: null,
+      };
+      undoRedoHistoryRef.current.set(activeIndex, newState);
+      console.log('[BannerBatch] 为产品', activeIndex, '创建新的 undo/redo 历史');
+      return newState;
+    }
+    return undoRedoHistoryRef.current.get(activeIndex)!;
+  }, [getActiveIndex]);
+  
+  // 更新当前产品的 undo/redo 状态并触发重新渲染
+  const updateCurrentUndoRedoState = useCallback((updater: (state: UndoRedoState) => UndoRedoState) => {
+    const activeIndex = getActiveIndex();
+    const currentState = getCurrentUndoRedoState();
+    const newState = updater(currentState);
+    undoRedoHistoryRef.current.set(activeIndex, newState);
+    // 触发重新渲染（通过更新一个状态）
+    setUndoRedoStateVersion(v => v + 1);
+  }, [getActiveIndex, getCurrentUndoRedoState]);
+  
+  // 用于触发重新渲染的版本号
+  const [undoRedoStateVersion, setUndoRedoStateVersion] = useState(0);
+  
+  // 计算当前产品的 undo/redo 对象（用于 UI 和操作）
+  const currentUndoRedo = useMemo(() => {
+    const state = getCurrentUndoRedoState();
+    return {
+      currentState: state.currentIndex >= 0 && state.currentIndex < state.history.length 
+        ? state.history[state.currentIndex] 
+        : null,
+      canUndo: state.history.length > 0 && state.currentIndex > 0,
+      canRedo: state.currentIndex < state.history.length - 1,
+      lastAction: state.lastAction,
+      pushState: (snapshot: TemplateSnapshot) => {
+        updateCurrentUndoRedoState((state) => {
+          const newHistory = state.history.slice(0, state.currentIndex + 1);
+          newHistory.push(snapshot);
+          console.log('[BannerBatch] pushState for product', getActiveIndex(), {
+            prevLength: state.history.length,
+            newLength: newHistory.length,
+            newIndex: newHistory.length - 1,
+          });
+          return {
+            history: newHistory,
+            currentIndex: newHistory.length - 1,
+            lastAction: 'push',
+          };
+        });
+      },
+      undo: () => {
+        updateCurrentUndoRedoState((state) => {
+          if (state.history.length > 0 && state.currentIndex > 0) {
+            console.log('[BannerBatch] undo for product', getActiveIndex(), {
+              currentIndex: state.currentIndex,
+              newIndex: state.currentIndex - 1,
+            });
+            return {
+              ...state,
+              currentIndex: state.currentIndex - 1,
+              lastAction: 'undo',
+            };
+          }
+          return state;
+        });
+      },
+      redo: () => {
+        updateCurrentUndoRedoState((state) => {
+          if (state.currentIndex < state.history.length - 1) {
+            console.log('[BannerBatch] redo for product', getActiveIndex(), {
+              currentIndex: state.currentIndex,
+              newIndex: state.currentIndex + 1,
+            });
+            return {
+              ...state,
+              currentIndex: state.currentIndex + 1,
+              lastAction: 'redo',
+            };
+          }
+          return state;
+        });
+      },
+      reset: () => {
+        updateCurrentUndoRedoState((state) => ({
+          ...state,
+          currentIndex: 0,
+          lastAction: 'reset',
+        }));
+      },
+      clear: () => {
+        updateCurrentUndoRedoState(() => ({
+          history: [],
+          currentIndex: -1,
+          lastAction: null,
+        }));
+      },
+    };
+  }, [getCurrentUndoRedoState, updateCurrentUndoRedoState, undoRedoStateVersion, getActiveIndex]);
   
   // 统一模板状态（用于一键保存判断）
   const [templateAssets, setTemplateAssets] = useState<{
@@ -110,14 +214,6 @@ export const BannerBatchPage: React.FC = () => {
   // 素材面板宽度和收起状态
   const [assetSidebarWidth, setAssetSidebarWidth] = useState(280);
   const [assetSidebarCollapsed, setAssetSidebarCollapsed] = useState(false);
-  
-  // 获取当前活动的索引（单图用 currentIndex，多图用 selectedBannerIndex）
-  const getActiveIndex = useCallback(() => {
-    if (isMultiView) {
-      return selectedBannerIndex ?? currentIndex;
-    }
-    return currentIndex;
-  }, [isMultiView, selectedBannerIndex, currentIndex]);
   
   // 2×2 预览网格相关状态
   const gridRef = useRef<HTMLDivElement | null>(null);
@@ -273,6 +369,219 @@ export const BannerBatchPage: React.FC = () => {
       }
     };
   }, [cssContent]);
+
+  // 提交快照（和 TemplateGenPage 一样）
+  const commitSnapshot = useCallback((reason: string) => {
+    const debugInfo = {
+      reason,
+      undoReady: undoReadyRef.current,
+      isRestoring: isRestoringRef.current,
+      hasIframe: !!(previewIframeRef.current || iframeRef.current),
+      hasIframeSize: !!iframeSize,
+      iframeSize,
+    };
+    console.log('[BannerBatch] commitSnapshot called:', debugInfo);
+    
+    if (!undoReadyRef.current) {
+      console.warn('[BannerBatch] commitSnapshot skipped: undo not ready', debugInfo);
+      return;
+    }
+    if (isRestoringRef.current) {
+      console.warn('[BannerBatch] commitSnapshot skipped: currently restoring', debugInfo);
+      return;
+    }
+    
+    // 使用当前活动的 iframe（单图用 previewIframeRef，多图用 iframeRef）
+    const activeIframe = previewIframeRef.current || iframeRef.current;
+    if (!activeIframe) {
+      console.warn('[BannerBatch] commitSnapshot skipped: no iframe', debugInfo);
+      return;
+    }
+    
+    try {
+      const iframeDoc = activeIframe.contentDocument || activeIframe.contentWindow?.document;
+      if (!iframeDoc) {
+        console.warn('[BannerBatch] commitSnapshot skipped: cannot access iframe document');
+        return;
+      }
+      if (!iframeSize) {
+        console.warn('[BannerBatch] commitSnapshot skipped: no iframe size');
+        return;
+      }
+      
+      const snapshot = captureSnapshot(
+        iframeDoc,
+        {
+          width: iframeSize.width,
+          height: iframeSize.height,
+          templateSize: '800x800', // BannerBatchPage 没有 templateSize，使用默认值
+        },
+        {
+          selected: null, // BannerBatchPage 没有背景选择功能
+          pos: { x: 0, y: 0 },
+          size: 100,
+        }
+      );
+      
+      console.log('[BannerBatch] 提交快照:', {
+        reason,
+        snapshot: {
+          meta: snapshot.meta,
+          elementsCount: Object.keys(snapshot.elements).length,
+        },
+      });
+      
+      currentUndoRedo.pushState(snapshot);
+    } catch (e) {
+      console.error('[BannerBatch] 提交快照失败:', e);
+    }
+  }, [currentUndoRedo.pushState, iframeSize, getActiveIndex]);
+
+  // 恢复快照（和 TemplateGenPage 一样）
+  const restoreSnapshotFromHistory = useCallback((snapshot: TemplateSnapshot) => {
+    const activeIndex = getActiveIndex();
+    console.log('[BannerBatch] restoreSnapshotFromHistory called:', {
+      productIndex: activeIndex,
+      hasIframe: !!(previewIframeRef.current || iframeRef.current),
+      snapshot: {
+        meta: snapshot.meta,
+        elementsCount: Object.keys(snapshot.elements).length,
+      },
+    });
+    
+    const activeIframe = previewIframeRef.current || iframeRef.current;
+    if (!activeIframe) {
+      console.warn('[BannerBatch] restoreSnapshotFromHistory skipped: no iframe');
+      return;
+    }
+    
+    isRestoringRef.current = true;
+    console.log('[BannerBatch] isRestoringRef set to true');
+    
+    try {
+      const iframeDoc = activeIframe.contentDocument || activeIframe.contentWindow?.document;
+      if (!iframeDoc) {
+        console.warn('[BannerBatch] restoreSnapshotFromHistory: iframe not ready, retrying in 100ms');
+        setTimeout(() => {
+          restoreSnapshotFromHistory(snapshot);
+        }, 100);
+        return;
+      }
+      
+      console.log('[BannerBatch] 开始恢复 meta');
+      // 恢复 meta（只恢复 iframeSize，BannerBatchPage 没有 templateSize）
+      if (snapshot.meta.width && snapshot.meta.height) {
+        console.log('[BannerBatch] 恢复 iframeSize:', snapshot.meta.width, 'x', snapshot.meta.height);
+        setIframeSize({ width: snapshot.meta.width, height: snapshot.meta.height });
+      }
+      
+      // 等待 state 更新后再恢复元素
+      setTimeout(() => {
+        try {
+          const iframeDoc2 = activeIframe.contentDocument || activeIframe.contentWindow?.document;
+          if (!iframeDoc2) {
+            console.warn('[BannerBatch] restoreSnapshotFromHistory: iframe doc not available after delay');
+            isRestoringRef.current = false;
+            return;
+          }
+          
+          console.log('[BannerBatch] 开始恢复元素，元素数量:', Object.keys(snapshot.elements).length);
+          
+          // 恢复元素
+          restoreSnapshot(
+            iframeDoc2,
+            snapshot,
+            undefined, // meta 已经通过 setState 更新
+            undefined  // background 不需要恢复
+          );
+          
+          // 同步更新 editedValues 中的 transform 值，使其与快照一致
+          // 这样 Effect 1 重新执行时不会覆盖恢复的状态
+          const activeIndex = getActiveIndex();
+          const updatedEditedValues: Record<string, string> = { ...editedValuesRef.current[activeIndex] || {} };
+          
+          // 从 iframe 中读取所有图片的实际 transform 值（因为可能有多个图片）
+          Object.entries(snapshot.elements).forEach(([fieldName, elementSnap]) => {
+            if (elementSnap.tag === 'IMG') {
+              // 对于图片元素，需要找到所有相同字段的图片并更新对应的 transform
+              const imgElements = Array.from(iframeDoc2.querySelectorAll(`[data-field="${fieldName}"]`)) as HTMLImageElement[];
+              const imgs = imgElements.filter(el => el.tagName === 'IMG');
+              
+              imgs.forEach((img, imgIndex) => {
+                const transformKey = `${fieldName}_transform_${imgIndex}`;
+                // 从恢复后的元素中读取实际的 transform 值
+                const actualTransform = img.style.transform || '';
+                if (actualTransform) {
+                  updatedEditedValues[transformKey] = actualTransform;
+                } else {
+                  // 如果没有 transform，清除 editedValues 中的值
+                  delete updatedEditedValues[transformKey];
+                }
+              });
+            }
+          });
+          
+          // 更新 editedValues
+          setEditedValues(prev => ({
+            ...prev,
+            [activeIndex]: updatedEditedValues,
+          }));
+          
+          console.log('[BannerBatch] 恢复快照完成，已同步 editedValues，transform 键数量:', 
+            Object.keys(updatedEditedValues).filter(k => k.includes('_transform_')).length);
+        } catch (e) {
+          console.error('[BannerBatch] 恢复元素失败:', e);
+        } finally {
+          // 延长释放时间，确保 Effect 1 不会在恢复后立即触发
+          setTimeout(() => {
+            requestAnimationFrame(() => {
+              setTimeout(() => {
+                isRestoringRef.current = false;
+                console.log('[BannerBatch] isRestoringRef set to false (after restore)');
+              }, 300); // 额外延迟 300ms，确保所有 effect 都已检查过 isRestoringRef
+            });
+          }, 200);
+        }
+      }, 50);
+    } catch (e) {
+      console.error('[BannerBatch] 恢复快照失败:', e);
+      isRestoringRef.current = false;
+      console.log('[BannerBatch] isRestoringRef set to false (error)');
+    }
+  }, []);
+
+  // Undo/Redo effect（和 TemplateGenPage 一样）
+  useEffect(() => {
+    const activeIndex = getActiveIndex();
+    const debugInfo = {
+      productIndex: activeIndex,
+      hasCurrentState: !!currentUndoRedo.currentState,
+      lastAction: currentUndoRedo.lastAction,
+      canUndo: currentUndoRedo.canUndo,
+      canRedo: currentUndoRedo.canRedo,
+      currentStateType: currentUndoRedo.currentState ? typeof currentUndoRedo.currentState : 'null',
+    };
+    
+    console.log('[BannerBatch] undo/redo effect triggered:', debugInfo);
+    
+    // 只在 undo/redo/reset 时恢复，push 时不恢复
+    if (currentUndoRedo.lastAction === 'undo' || currentUndoRedo.lastAction === 'redo' || currentUndoRedo.lastAction === 'reset') {
+      if (!currentUndoRedo.currentState) {
+        console.error('[BannerBatch] undo/redo effect: lastAction is', currentUndoRedo.lastAction, 'but currentState is null!', debugInfo);
+        return;
+      }
+      console.log('[BannerBatch] undo/redo effect: restoring snapshot, action:', currentUndoRedo.lastAction);
+      restoreSnapshotFromHistory(currentUndoRedo.currentState);
+    } else {
+      if (currentUndoRedo.lastAction === 'push') {
+        console.log('[BannerBatch] undo/redo effect: push action, skipping restore');
+      } else if (!currentUndoRedo.currentState) {
+        console.log('[BannerBatch] undo/redo effect: no current state and not undo/redo action, skipping');
+      } else {
+        console.log('[BannerBatch] undo/redo effect: skipping restore, action:', currentUndoRedo.lastAction);
+      }
+    }
+  }, [currentUndoRedo.currentState, currentUndoRedo.lastAction, currentUndoRedo.canUndo, currentUndoRedo.canRedo, restoreSnapshotFromHistory, getActiveIndex, undoRedoStateVersion]);
 
   // 监听 2×2 预览网格宽度变化，用于计算缩放比例
   useLayoutEffect(() => {
@@ -1178,6 +1487,8 @@ export const BannerBatchPage: React.FC = () => {
         [fieldName]: newValue
       }
     }));
+    
+    // 注意：不再在每次输入时提交快照，改为在 onBlur 或 Enter 时提交
   }, [isMultiView, currentIndex, getActiveIndex, updateFieldInDocument, selectedBannerIndex, clearAllFieldHighlights]);
 
   // 调整图片位置和缩放
@@ -1315,10 +1626,16 @@ export const BannerBatchPage: React.FC = () => {
         }));
       });
       
+      // 按钮操作结束后提交快照
+      if (undoReadyRef.current) {
+        setTimeout(() => {
+          commitSnapshot('button-action-end');
+        }, 50);
+      }
     } catch (e) {
       console.warn('调整图片变换失败:', e);
     }
-  }, [isMultiView, currentIndex, getActiveIndex, multiIframeRefs, previewIframeRef, iframeRef]);
+  }, [isMultiView, currentIndex, getActiveIndex, multiIframeRefs, previewIframeRef, iframeRef, commitSnapshot]);
 
   // 为选中的图片字段添加拖拽和缩放功能
   useEffect(() => {
@@ -1368,7 +1685,7 @@ export const BannerBatchPage: React.FC = () => {
         let startTranslateX = 0;
         let startTranslateY = 0;
         let currentScale = 1;
-        let wheelDebounceTimer: NodeJS.Timeout | null = null;
+        let wheelDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
         const parseTransform = (transform: string) => {
           let tx = 0, ty = 0, s = 1;
@@ -1455,12 +1772,11 @@ export const BannerBatchPage: React.FC = () => {
 
         const handleMouseUp = () => {
           if (isDragging) {
-            // 拖拽结束时记录状态（只在 undo ready 时记录）
+            // 拖拽结束时提交快照（只在 undo ready 时记录）
             if (undoReadyRef.current) {
-              setEditedValues(prev => {
-                pushEditedValuesState(prev);
-                return prev;
-              });
+              setTimeout(() => {
+                commitSnapshot('drag-end');
+              }, 50);
             }
           }
           isDragging = false;
@@ -1493,13 +1809,10 @@ export const BannerBatchPage: React.FC = () => {
             clearTimeout(wheelDebounceTimer);
           }
 
-          // 设置新的定时器，在滚轮停止300ms后记录状态（只在 undo ready 时记录）
+          // 设置新的定时器，在滚轮停止300ms后提交快照（只在 undo ready 时记录）
           wheelDebounceTimer = setTimeout(() => {
             if (undoReadyRef.current) {
-              setEditedValues(prev => {
-                pushEditedValuesState(prev);
-                return prev;
-              });
+              commitSnapshot('wheel-zoom-end');
             }
             wheelDebounceTimer = null;
           }, 300);
@@ -1592,7 +1905,7 @@ export const BannerBatchPage: React.FC = () => {
         }
       });
     };
-  }, [selectedField, currentIndex, isMultiView, getActiveIndex, multiIframeRefs, previewIframeRef, iframeRef, iframeSize, setEditedValues, pushEditedValuesState]);
+  }, [selectedField, currentIndex, isMultiView, getActiveIndex, multiIframeRefs, previewIframeRef, iframeRef, iframeSize, setEditedValues, commitSnapshot]);
 
   // 清除 CSS
   const handleClearCss = () => {
@@ -1696,7 +2009,18 @@ export const BannerBatchPage: React.FC = () => {
         return;
       }
       
+      // 恢复期间不应用数据，避免覆盖恢复的快照状态
+      if (isRestoringRef.current) {
+        console.log('[BannerBatch] Effect 1: 恢复期间，跳过数据应用');
+        return;
+      }
+      
       const timer = setTimeout(() => {
+        // 再次检查恢复状态（可能在延迟期间开始恢复）
+        if (isRestoringRef.current) {
+          console.log('[BannerBatch] Effect 1: 延迟期间检测到恢复，跳过数据应用');
+          return;
+        }
         // 如果是第一个索引（索引0），且是空对象，且没有编辑的值，重置 iframe 到原始 HTML
         const isEmptyTemplate = currentIndex === 0 && Object.keys(jsonData[currentIndex]).length === 0;
         // 使用 ref 获取最新的 editedValues，避免依赖 editedValues 导致 Effect 1 频繁触发
@@ -1722,10 +2046,29 @@ export const BannerBatchPage: React.FC = () => {
           // 对于其他情况（包括有编辑值的空模板），正常应用 JSON 数据（会自动合并 editedValues）
           applyJsonDataToIframe(jsonData[currentIndex], currentIndex);
         }
+        
+        // 切换产品后，如果该产品还没有初始快照，提交一个初始快照
+        const activeIndex = getActiveIndex();
+        if (!initialSnapshotCommittedRef.current[activeIndex] && undoReadyRef.current && iframeSize) {
+          // 延迟一点确保数据已应用
+          setTimeout(() => {
+            if (!initialSnapshotCommittedRef.current[activeIndex] && undoReadyRef.current && iframeSize) {
+              const activeIframe = previewIframeRef.current || iframeRef.current;
+              if (activeIframe) {
+                const iframeDoc = activeIframe.contentDocument || activeIframe.contentWindow?.document;
+                if (iframeDoc && iframeDoc.querySelectorAll('[data-field]').length > 0) {
+                  initialSnapshotCommittedRef.current[activeIndex] = true;
+                  commitSnapshot('product-switch-initial');
+                  console.log('[BannerBatch] 切换产品后提交初始快照，产品索引:', activeIndex);
+                }
+              }
+            }
+          }, 300);
+        }
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [jsonData, currentIndex, applyJsonDataToIframe, htmlContent, cssContent, isMultiView]);
+  }, [jsonData, currentIndex, applyJsonDataToIframe, htmlContent, cssContent, isMultiView, getActiveIndex, iframeSize, commitSnapshot]);
 
   // 自动保存数据到 localStorage（防抖，只保存关键信息）
   useEffect(() => {
@@ -2228,6 +2571,9 @@ export const BannerBatchPage: React.FC = () => {
     if (htmlContent) {
       // 模板内容变化时，重置 undo ready 状态（等待 iframe 重新加载）
       undoReadyRef.current = false;
+      initialSnapshotCommittedRef.current = {};
+      // 清除所有产品的 undo/redo 历史
+      undoRedoHistoryRef.current.clear();
       
       // 同步更新导出 iframe 的内容
       if (iframeRef.current) {
@@ -2253,11 +2599,56 @@ export const BannerBatchPage: React.FC = () => {
     } else {
       // 模板被清除时，也重置 undo ready
       undoReadyRef.current = false;
+      initialSnapshotCommittedRef.current = {};
+      // 清除所有产品的 undo/redo 历史
+      undoRedoHistoryRef.current.clear();
       setIframeSize(null);
       setSelectedField(null);
       setSelectedFieldValue("");
     }
   }, [htmlContent, cssContent, adjustIframeSize]);
+
+  // 当切换产品（currentIndex 或 selectedBannerIndex 变化）时，检查并提交该产品的初始快照
+  useEffect(() => {
+    if (!htmlContent || !jsonData.length || !undoReadyRef.current || !iframeSize) return;
+    if (isRestoringRef.current) return; // 恢复期间不提交
+    
+    const activeIndex = getActiveIndex();
+    
+    // 如果该产品还没有初始快照，提交一个
+    if (!initialSnapshotCommittedRef.current[activeIndex]) {
+      const checkAndCommit = () => {
+        if (initialSnapshotCommittedRef.current[activeIndex]) return; // 已经提交过了
+        if (isRestoringRef.current) return; // 恢复期间不提交
+        
+        const activeIframe = previewIframeRef.current || iframeRef.current;
+        if (!activeIframe) {
+          setTimeout(checkAndCommit, 100);
+          return;
+        }
+        
+        const iframeDoc = activeIframe.contentDocument || activeIframe.contentWindow?.document;
+        if (!iframeDoc) {
+          setTimeout(checkAndCommit, 100);
+          return;
+        }
+        
+        // 检查是否有 data-field 元素（确保模板内容已加载）
+        const hasFields = iframeDoc.querySelectorAll('[data-field]').length > 0;
+        if (!hasFields) {
+          setTimeout(checkAndCommit, 100);
+          return;
+        }
+        
+        console.log('[BannerBatch] 切换产品后提交初始快照，产品索引:', activeIndex);
+        initialSnapshotCommittedRef.current[activeIndex] = true;
+        commitSnapshot('product-switch-initial');
+      };
+      
+      // 延迟一点确保数据已应用
+      setTimeout(checkAndCommit, 300);
+    }
+  }, [currentIndex, selectedBannerIndex, jsonData.length, htmlContent, iframeSize, getActiveIndex, commitSnapshot]);
 
   // Effect 2: 字段高亮 (Field Highlighting) - 仅负责在字段变化时高亮对应元素
   useEffect(() => {
@@ -2336,6 +2727,14 @@ export const BannerBatchPage: React.FC = () => {
                     adjustIframeSize();
                     // 模板和 iframe 完全 ready 后，允许 undo/redo
                     undoReadyRef.current = true;
+                    // 延迟提交当前产品的初始快照，确保所有内容已加载
+                    setTimeout(() => {
+                      const activeIndex = getActiveIndex();
+                      if (!initialSnapshotCommittedRef.current[activeIndex] && undoReadyRef.current && iframeSize) {
+                        initialSnapshotCommittedRef.current[activeIndex] = true;
+                        commitSnapshot('template-loaded-initial');
+                      }
+                    }, 500);
                     // 添加点击事件监听，点击 data-field 元素时自动选中字段
                     try {
                       const iframe = e.currentTarget;
@@ -2425,6 +2824,14 @@ export const BannerBatchPage: React.FC = () => {
                                   adjustIframeSize();
                                   // 多图模式下，第一个 iframe 加载完成后允许 undo/redo
                                   undoReadyRef.current = true;
+                                  // 延迟提交当前产品的初始快照，确保所有内容已加载
+                                  setTimeout(() => {
+                                    const activeIndex = getActiveIndex();
+                                    if (!initialSnapshotCommittedRef.current[activeIndex] && undoReadyRef.current && iframeSize) {
+                                      initialSnapshotCommittedRef.current[activeIndex] = true;
+                                      commitSnapshot('template-loaded-initial');
+                                    }
+                                  }, 500);
                                 }
                                 
                                 // 给 iframe 内部添加点击事件
@@ -2777,10 +3184,10 @@ export const BannerBatchPage: React.FC = () => {
               <h3 style={{ margin: 0 }}>本模板可编辑字段</h3>
               {templateFields.length > 0 && (
                 <UndoRedoButtons
-                  onUndo={undoEditedValues}
-                  onRedo={redoEditedValues}
-                  canUndo={canUndo}
-                  canRedo={canRedo}
+                  onUndo={currentUndoRedo.undo}
+                  onRedo={currentUndoRedo.redo}
+                  canUndo={currentUndoRedo.canUndo}
+                  canRedo={currentUndoRedo.canRedo}
                 />
               )}
             </div>
@@ -2841,6 +3248,12 @@ export const BannerBatchPage: React.FC = () => {
                                     // 立即更新显示值，避免从 iframe 读取时图片还未加载完成
                                     setSelectedFieldValue(assetUrl);
                                     setSuccess(`已替换 ${f.label || f.name} 的素材`);
+                                    // 替换素材后立即提交快照
+                                    if (undoReadyRef.current) {
+                                      setTimeout(() => {
+                                        commitSnapshot('replace-asset');
+                                      }, 50);
+                                    }
                                   }
                                 }}
                                 onClick={(e) => e.stopPropagation()}
@@ -2931,6 +3344,23 @@ export const BannerBatchPage: React.FC = () => {
                                 const newValue = e.target.value;
                                 setSelectedFieldValue(newValue);
                                 updateFieldValue(f.name, newValue);
+                              }}
+                              onBlur={() => {
+                                // 失去焦点时提交快照
+                                if (undoReadyRef.current) {
+                                  commitSnapshot('text-field-blur');
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                // 按 Enter 键时提交快照
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  if (undoReadyRef.current) {
+                                    commitSnapshot('text-field-enter');
+                                  }
+                                  // 失去焦点
+                                  (e.target as HTMLInputElement).blur();
+                                }
                               }}
                               placeholder="输入文本内容"
                               onClick={(e) => e.stopPropagation()}

@@ -61,7 +61,6 @@ export const TemplateGenPage: React.FC = () => {
   const isRestoringRef = useRef<boolean>(false);
   const undoReadyRef = useRef<boolean>(false);
   const wheelDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const textDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   
   const undoRedo = useUndoRedo<TemplateSnapshot>();
   
@@ -1771,16 +1770,8 @@ export const TemplateGenPage: React.FC = () => {
       }
     }
     
-    // 文本输入：debounce 提交
-    if (element.tagName !== 'IMG') {
-      if (textDebounceTimerRef.current) {
-        clearTimeout(textDebounceTimerRef.current);
-      }
-      textDebounceTimerRef.current = setTimeout(() => {
-        commitSnapshot('text-change');
-      }, 300);
-    }
-  }, [commitSnapshot]);
+    // 注意：不再在每次输入时提交快照，改为在 onBlur 或 Enter 时提交
+  }, []);
 
   // 存储所有按钮的连续触发定时器（使用 Map 来区分不同的按钮）
   const continuousActionTimers = useRef<Map<string, { interval: NodeJS.Timeout | null; timeout: NodeJS.Timeout | null }>>(new Map());
@@ -4856,6 +4847,23 @@ export const TemplateGenPage: React.FC = () => {
                                 const newValue = e.target.value;
                                 setSelectedFieldValue(newValue);
                                 updateFieldValue(f.name, newValue);
+                              }}
+                              onBlur={() => {
+                                // 失去焦点时提交快照
+                                if (undoReadyRef.current) {
+                                  commitSnapshot('text-field-blur');
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                // 按 Enter 键时提交快照
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  if (undoReadyRef.current) {
+                                    commitSnapshot('text-field-enter');
+                                  }
+                                  // 失去焦点
+                                  (e.target as HTMLInputElement).blur();
+                                }
                               }}
                               placeholder="输入文本内容"
                               onClick={(e) => e.stopPropagation()}
