@@ -64,7 +64,7 @@ export function getFluidDAMUrl(): string {
  */
 export function getLinkUrl(): string {
   if (isProductionMode()) {
-    return '/link';
+    return '/bannergen/link';
   }
   
   // Development mode: Link page is part of Banner_gen (port 5173), use dynamic hostname
