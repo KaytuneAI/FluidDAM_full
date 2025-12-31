@@ -17,7 +17,10 @@ export default defineConfig(({ command }) => ({
         rewrite: (path) => {
           // 去掉 /bannergen 前缀，保留后续路径
           const newPath = path.replace(/^\/bannergen/, '') || '/';
-          console.log('[Vite Proxy] BannerGen rewrite:', path, '->', newPath);
+          // Only log in development mode
+          if (command === 'serve') {
+            console.log('[Vite Proxy] BannerGen rewrite:', path, '->', newPath);
+          }
           return newPath;
         },
         ws: true, // 支持 WebSocket
@@ -29,7 +32,10 @@ export default defineConfig(({ command }) => ({
         rewrite: (path) => {
           // 去掉 /spotstudio 前缀，保留后续路径
           const newPath = path.replace(/^\/spotstudio/, '') || '/';
-          console.log('[Vite Proxy] SpotStudio rewrite:', path, '->', newPath);
+          // Only log in development mode
+          if (command === 'serve') {
+            console.log('[Vite Proxy] SpotStudio rewrite:', path, '->', newPath);
+          }
           return newPath;
         },
         ws: true,
