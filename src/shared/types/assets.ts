@@ -22,6 +22,9 @@ export type TempAsset = {
   prompt?: string;        // 生成时使用的提示词
   generatedAt?: number;   // 生成时间戳
   templateSize?: string;  // 模板尺寸（如 "800x800"）
+
+  // 模板相关字段
+  fieldName?: string;     // 字段名称（用于模板提取的素材）
 };
 
 
