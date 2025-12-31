@@ -50,6 +50,7 @@ export const TemplateGenPage: React.FC = () => {
   // 背景相关状态
   const [backgrounds, setBackgrounds] = useState<string[]>([]);
   const [selectedBackground, setSelectedBackground] = useState<string | null>(null);
+  const [defaultBackground, setDefaultBackground] = useState<string | null>(null); // 缺省背景（第一次load的，不能删除）
   const [backgroundPosition, setBackgroundPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 }); // 背景位置（像素偏移）
   const [backgroundSize, setBackgroundSize] = useState<number>(100); // 背景缩放百分比
   const [overlaySize, setOverlaySize] = useState<{ width: number; height: number } | null>(null); // 虚线边框尺寸
@@ -1593,6 +1594,12 @@ export const TemplateGenPage: React.FC = () => {
         // 提取背景图片
         const bgImages = extractBackgroundImages(result.html, result.css);
         setBackgrounds(bgImages);
+        // 设置第一个背景为缺省背景（不能删除）
+        if (bgImages.length > 0) {
+          setDefaultBackground(bgImages[0]);
+        } else {
+          setDefaultBackground(null);
+        }
         
         // 提取模板中的所有图片素材
         const assets = extractTemplateAssets(result.html, result.css);
@@ -1640,6 +1647,12 @@ export const TemplateGenPage: React.FC = () => {
             // 提取背景图片
             const bgImages = extractBackgroundImages(result.html, result.css || "");
             setBackgrounds(bgImages);
+            // 设置第一个背景为缺省背景（不能删除）
+            if (bgImages.length > 0) {
+              setDefaultBackground(bgImages[0]);
+            } else {
+              setDefaultBackground(null);
+            }
             
             // 提取模板中的所有图片素材
             const assets = extractTemplateAssets(result.html, result.css || "");
@@ -4597,6 +4610,13 @@ export const TemplateGenPage: React.FC = () => {
                                       e.dataTransfer.getData('application/asset-url');
                       
                       if (assetUrl) {
+                        // 如果素材不在背景列表中，添加到列表
+                        setBackgrounds((prev) => {
+                          if (!prev.includes(assetUrl)) {
+                            return [...prev, assetUrl];
+                          }
+                          return prev;
+                        });
                         // 设置为新背景
                         setSelectedBackground(assetUrl);
                         // 重置背景位置和缩放
@@ -4672,6 +4692,70 @@ export const TemplateGenPage: React.FC = () => {
                           />
                         )}
                       </div>
+                      {/* 删除按钮 - 右上角 */}
+                      {selectedBackground !== defaultBackground && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const bgToDelete = selectedBackground;
+                            if (!bgToDelete) return;
+                            
+                            // 从背景列表中删除
+                            setBackgrounds((prev) => {
+                              const remaining = prev.filter(bg => bg !== bgToDelete);
+                              // 如果删除的是当前选中的背景，切换到其他背景
+                              if (bgToDelete === selectedBackground) {
+                                if (remaining.length > 0) {
+                                  setSelectedBackground(remaining[0]);
+                                  setBackgroundPosition({ x: 0, y: 0 });
+                                  setBackgroundSize(100);
+                                  applyBackgroundAdjustment(remaining[0], { x: 0, y: 0 }, 100);
+                                } else {
+                                  setSelectedBackground(null);
+                                  setBackgroundPosition({ x: 0, y: 0 });
+                                  setBackgroundSize(100);
+                                }
+                              }
+                              return remaining;
+                            });
+                            setSuccess('已删除背景图片');
+                            // 删除后提交快照
+                            setTimeout(() => {
+                              commitSnapshot('delete-background');
+                            }, 100);
+                          }}
+                          style={{
+                            position: 'absolute',
+                            top: '8px',
+                            right: '8px',
+                            width: '24px',
+                            height: '24px',
+                            borderRadius: '50%',
+                            background: 'rgba(0, 0, 0, 0.6)',
+                            color: 'white',
+                            border: 'none',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '14px',
+                            fontWeight: 'bold',
+                            zIndex: 10,
+                            transition: 'all 0.2s ease',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = 'rgba(220, 38, 38, 0.8)';
+                            e.currentTarget.style.transform = 'scale(1.1)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'rgba(0, 0, 0, 0.6)';
+                            e.currentTarget.style.transform = 'scale(1)';
+                          }}
+                          title="删除背景（缺省背景不能删除）"
+                        >
+                          ×
+                        </button>
+                      )}
                     </div>
                       <div className="background-controls" onClick={(e) => e.stopPropagation()}>
                         <div className="background-control-hint">
@@ -4721,6 +4805,13 @@ export const TemplateGenPage: React.FC = () => {
                                   e.dataTransfer.getData('application/asset-url');
                   
                   if (assetUrl) {
+                    // 如果素材不在背景列表中，添加到列表
+                    setBackgrounds((prev) => {
+                      if (!prev.includes(assetUrl)) {
+                        return [...prev, assetUrl];
+                      }
+                      return prev;
+                    });
                     // 设置为新背景
                     setSelectedBackground(assetUrl);
                     // 重置背景位置和缩放
