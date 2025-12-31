@@ -61,7 +61,7 @@ export const TemplateGenPage: React.FC = () => {
   // Undo/Redo 相关
   const isRestoringRef = useRef<boolean>(false);
   const undoReadyRef = useRef<boolean>(false);
-  const wheelDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const wheelDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   const undoRedo = useUndoRedo<TemplateSnapshot>();
   
@@ -1642,6 +1642,7 @@ export const TemplateGenPage: React.FC = () => {
               imagePathMap: new Map(), // HTML 文件上传时没有原始路径映射
               fontPathMap: new Map(), // HTML 文件上传时没有原始路径映射
               originalFiles: new Map(), // HTML 文件上传时没有原始文件
+              originalCssContents: new Map(), // HTML 文件上传时没有原始 CSS 内容
             });
             
             // 提取背景图片
@@ -1787,7 +1788,7 @@ export const TemplateGenPage: React.FC = () => {
   }, []);
 
   // 存储所有按钮的连续触发定时器（使用 Map 来区分不同的按钮）
-  const continuousActionTimers = useRef<Map<string, { interval: NodeJS.Timeout | null; timeout: NodeJS.Timeout | null }>>(new Map());
+  const continuousActionTimers = useRef<Map<string, { interval: ReturnType<typeof setInterval> | null; timeout: ReturnType<typeof setTimeout> | null }>>(new Map());
 
   // 组件卸载时清理所有定时器
   useEffect(() => {
