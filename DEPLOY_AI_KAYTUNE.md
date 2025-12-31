@@ -321,7 +321,25 @@ sudo certbot renew --dry-run
 
 ### 7. 启动后端 API 服务器
 
-#### 7.1 使用 PM2 启动（推荐）
+#### 7.1 使用启动脚本（推荐）
+```bash
+# 进入项目根目录
+cd /usr/local/FluidDAM_Full
+
+# 确保脚本有执行权限
+chmod +x start-all.sh
+
+# 运行启动脚本（会自动使用 PM2 启动 API 服务器）
+./start-all.sh
+```
+
+**启动脚本会自动：**
+- 检查 Node.js、npm、PM2 是否安装
+- 检查并安装依赖（如果需要）
+- 使用 PM2 启动 API 服务器（端口 3001）
+- 保存 PM2 配置
+
+#### 7.2 手动使用 PM2 启动（如果脚本失败）
 ```bash
 cd /usr/local/FluidDAM_Full/FluidDAM
 
@@ -419,8 +437,10 @@ sudo cp -r /usr/local/FluidDAM_Full/FluidDAM/public/shares/* /var/www/html/share
 sudo cp /usr/local/FluidDAM_Full/FluidDAM/public/images-database.json /var/www/html/ 2>/dev/null || true
 
 # 5. 重启 API 服务器（如果后端有更新）
-cd /usr/local/FluidDAM_Full/FluidDAM
-pm2 restart fluiddam-api
+cd /usr/local/FluidDAM_Full
+./start-all.sh
+# 或者手动重启
+# cd FluidDAM && pm2 restart fluiddam-api
 
 # 6. 清除浏览器缓存或等待 CDN 缓存过期
 ```
