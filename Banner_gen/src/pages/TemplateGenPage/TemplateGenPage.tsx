@@ -110,9 +110,13 @@ export const TemplateGenPage: React.FC = () => {
       const iframeDoc = previewIframeRef.current.contentDocument || previewIframeRef.current.contentWindow?.document;
       if (!iframeDoc) return;
       
-      // 缩放所有有 data-field 的元素
+      // 缩放所有有 data-field 的元素（排除 resize handle）
       const allFieldElements = Array.from(iframeDoc.querySelectorAll('[data-field]')) as HTMLElement[];
-      allFieldElements.forEach((element) => {
+      const validFieldElements = allFieldElements.filter(el => 
+        !el.classList.contains('width-resize-handle') && 
+        !el.classList.contains('height-resize-handle')
+      );
+      validFieldElements.forEach((element) => {
         const currentTransform = element.style.transform || '';
         
         // 解析当前的 transform
@@ -510,9 +514,13 @@ export const TemplateGenPage: React.FC = () => {
         const body = iframeDoc.body;
         if (!body || body.children.length === 0) return;
 
-        // 重置所有元素的 transform，然后应用新的缩放
+        // 重置所有元素的 transform，然后应用新的缩放（排除 resize handle）
         const allFieldElements = Array.from(iframeDoc.querySelectorAll('[data-field]')) as HTMLElement[];
-        allFieldElements.forEach((element) => {
+        const validFieldElements = allFieldElements.filter(el => 
+          !el.classList.contains('width-resize-handle') && 
+          !el.classList.contains('height-resize-handle')
+        );
+        validFieldElements.forEach((element) => {
           // 重置 transform（从原始状态开始）
           element.style.transform = '';
           
@@ -1199,9 +1207,13 @@ export const TemplateGenPage: React.FC = () => {
     if (!container) return;
 
     // 获取所有需要隐藏的元素：
-    // 1. 所有有 data-field 的元素
+    // 1. 所有有 data-field 的元素（排除 resize handle）
     // 2. container 内部的所有直接子元素（除了背景图本身）
-    const fieldElements = Array.from(iframeDoc.querySelectorAll('[data-field]')) as HTMLElement[];
+    const allFieldElements = Array.from(iframeDoc.querySelectorAll('[data-field]')) as HTMLElement[];
+    const fieldElements = allFieldElements.filter(el => 
+      !el.classList.contains('width-resize-handle') && 
+      !el.classList.contains('height-resize-handle')
+    );
     const containerChildren = Array.from(container.children) as HTMLElement[];
     
     if (showBackgroundOnly) {
@@ -1703,7 +1715,39 @@ export const TemplateGenPage: React.FC = () => {
       }
     }
   }, []);
-  
+
+  // 统一「选中元素归一化」逻辑 - 排除 resize handle
+  const normalizeFieldElement = useCallback((target: EventTarget | null): HTMLElement | null => {
+    const el = target as HTMLElement | null;
+    if (!el) return null;
+
+    // 如果点到 resize handle，返回父级（真正的 field 容器）
+    if (
+      el.classList.contains('width-resize-handle') ||
+      el.classList.contains('height-resize-handle')
+    ) {
+      return el.parentElement as HTMLElement | null;
+    }
+
+    // 否则，取最近的 field 容器（排除 handle）
+    return el.closest(
+      '[data-field]:not(.width-resize-handle):not(.height-resize-handle)'
+    ) as HTMLElement | null;
+  }, []);
+
+  // 获取所有有效的 field 元素（排除 resize handle）
+  const getValidFieldElements = useCallback((doc: Document, fieldName: string): HTMLElement[] => {
+    return Array.from(
+      doc.querySelectorAll(`[data-field="${fieldName}"]`)
+    ).filter(el => {
+      const htmlEl = el as HTMLElement;
+      return (
+        !htmlEl.classList.contains('width-resize-handle') &&
+        !htmlEl.classList.contains('height-resize-handle')
+      );
+    }) as HTMLElement[];
+  }, []);
+
   // 高亮 iframe 中的元素（复用 BannerGen 的逻辑，简化版）
   const highlightElementInIframe = useCallback((fieldName: string) => {
     // 先清除所有高亮
@@ -1716,9 +1760,10 @@ export const TemplateGenPage: React.FC = () => {
       const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
       if (!iframeDoc) return;
 
-      // 普通字段处理
-      const element = iframeDoc.querySelector(`[data-field="${fieldName}"]`) as HTMLElement;
-      if (element) {
+      // 普通字段处理（排除 resize handle）
+      const elements = getValidFieldElements(iframeDoc, fieldName);
+      if (elements.length > 0) {
+        const element = elements[0]; // 取第一个有效元素
         // 添加高亮样式
         element.classList.add("field-highlight");
         
@@ -1744,7 +1789,7 @@ export const TemplateGenPage: React.FC = () => {
       console.warn("无法访问 iframe 内容:", e);
       setSelectedFieldValue("无法访问预览内容");
     }
-  }, [clearAllFieldHighlights]);
+  }, [clearAllFieldHighlights, getValidFieldElements]);
 
   // 处理字段点击（复用 BannerGen 的逻辑）
   const handleFieldClick = useCallback((fieldName: string) => {
@@ -1765,8 +1810,10 @@ export const TemplateGenPage: React.FC = () => {
     if (!previewIframeRef.current?.contentDocument) return;
 
     const doc = previewIframeRef.current.contentDocument;
-    const element = doc.querySelector(`[data-field="${fieldName}"]`) as HTMLElement;
-    if (!element) return;
+    // 使用过滤后的元素列表，排除 resize handle
+    const elements = getValidFieldElements(doc, fieldName);
+    if (elements.length === 0) return;
+    const element = elements[0]; // 取第一个有效元素
 
     if (element.tagName === 'IMG') {
       (element as HTMLImageElement).src = value;
@@ -1788,7 +1835,43 @@ export const TemplateGenPage: React.FC = () => {
     }
     
     // 注意：不再在每次输入时提交快照，改为在 onBlur 或 Enter 时提交
+  }, [getValidFieldElements]);
+
+  // 应用文本颜色（兼容渐变字 / SVG）
+  const applyTextColor = useCallback((el: HTMLElement, color: string) => {
+    el.style.setProperty('color', color, 'important');
+    el.style.setProperty('-webkit-text-fill-color', color, 'important');
+
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'text' || tag === 'tspan') {
+      el.style.setProperty('fill', color, 'important');
+      el.setAttribute('fill', color);
+    }
   }, []);
+
+  // 修改文字颜色
+  const updateTextColor = useCallback((fieldName: string, color: string) => {
+    if (!previewIframeRef.current?.contentDocument) return;
+
+    const doc = previewIframeRef.current.contentDocument;
+    // 使用过滤后的元素列表，排除 resize handle
+    const elements = getValidFieldElements(doc, fieldName);
+    
+    // 只处理非图片元素
+    const textElements = elements.filter(el => el.tagName !== 'IMG');
+    if (textElements.length === 0) return;
+
+    textElements.forEach(element => {
+      applyTextColor(element, color);
+    });
+
+    // 提交快照
+    if (undoReadyRef.current) {
+      setTimeout(() => {
+        commitSnapshot('text-color-change');
+      }, 50);
+    }
+  }, [commitSnapshot, getValidFieldElements, applyTextColor]);
 
   // 存储所有按钮的连续触发定时器（使用 Map 来区分不同的按钮）
   const continuousActionTimers = useRef<Map<string, { interval: ReturnType<typeof setInterval> | null; timeout: ReturnType<typeof setTimeout> | null }>>(new Map());
@@ -1892,8 +1975,8 @@ export const TemplateGenPage: React.FC = () => {
       const iframeDoc = previewIframeRef.current.contentDocument || previewIframeRef.current.contentWindow?.document;
       if (!iframeDoc) return;
       
-      // 找到所有具有相同 data-field 的元素（支持图片和文本）
-      const elements = Array.from(iframeDoc.querySelectorAll(`[data-field="${fieldName}"]`)) as HTMLElement[];
+      // 找到所有具有相同 data-field 的元素（支持图片和文本，排除 resize handle）
+      const elements = getValidFieldElements(iframeDoc, fieldName);
       
       if (elements.length === 0) return;
       
@@ -1961,25 +2044,16 @@ export const TemplateGenPage: React.FC = () => {
     } catch (e) {
       console.warn('调整元素变换失败:', e);
     }
-  }, []);
+  }, [getValidFieldElements]);
 
   // 处理 iframe 内元素点击，自动选中对应的 data-field（复用 BannerGen 的逻辑）
   const handleIframeElementClick = useCallback((e: MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (!target) return;
+    // 使用 normalizeFieldElement 统一处理，排除 resize handle
+    const normalizedElement = normalizeFieldElement(e.target);
+    if (!normalizedElement) return;
 
-    // 向上查找具有 data-field 属性的元素（增加查找层数，提高灵敏度）
-    let element: HTMLElement | null = target;
-    let fieldName: string | null = null;
-    
-    // 增加向上查找层数到15层，确保能找到嵌套较深的元素
-    for (let i = 0; i < 15 && element; i++) {
-      fieldName = element.getAttribute('data-field');
-      if (fieldName) {
-        break;
-      }
-      element = element.parentElement;
-    }
+    const fieldName = normalizedElement.getAttribute('data-field');
+    if (!fieldName) return;
 
     // 如果找到了 data-field，选中对应的字段
     if (fieldName) {
@@ -2000,7 +2074,7 @@ export const TemplateGenPage: React.FC = () => {
       }
       }, 0);
     }
-  }, [selectedField, highlightElementInIframe, clearAllFieldHighlights]);
+  }, [selectedField, highlightElementInIframe, clearAllFieldHighlights, normalizeFieldElement]);
 
   // 当选中字段时，将选中的字段移到列表最上面，并滚动到视区
   useEffect(() => {
@@ -2057,8 +2131,8 @@ export const TemplateGenPage: React.FC = () => {
         const iframeDoc = targetIframe.contentDocument || targetIframe.contentWindow?.document;
         if (!iframeDoc) return () => {}; // 返回空清理函数
         
-        // 找到所有具有相同 data-field 的元素（支持图片和文本）
-        const elements = Array.from(iframeDoc.querySelectorAll(`[data-field="${selectedField}"]`)) as HTMLElement[];
+        // 找到所有具有相同 data-field 的元素（支持图片和文本，排除 resize handle）
+        const elements = getValidFieldElements(iframeDoc, selectedField);
         
         if (elements.length === 0) return () => {}; // 返回空清理函数
 
@@ -2252,7 +2326,179 @@ export const TemplateGenPage: React.FC = () => {
         cleanup();
       }
     };
-  }, [selectedField, iframeSize]);
+  }, [selectedField, iframeSize, getValidFieldElements]);
+
+  // 为选中的文字字段添加宽度调整功能
+  useEffect(() => {
+    if (!selectedField || !previewIframeRef.current) return;
+    
+    // 只处理非图片字段（文字字段）
+    const isImageField = selectedField.includes("_src") || selectedField.includes("image") || selectedField.includes("img");
+    if (isImageField) return;
+    
+    // 跳过价格字段（价格字段有特殊结构）
+    if (selectedField === 'sec_price_int' || selectedField === 'sec_price_decimal') return;
+
+    const setupWidthResize = (): (() => void) => {
+      try {
+        const iframeDoc = previewIframeRef.current?.contentDocument || previewIframeRef.current?.contentWindow?.document;
+        if (!iframeDoc) return () => {};
+        
+        // 找到所有具有相同 data-field 的元素（排除 resize handle）
+        const elements = getValidFieldElements(iframeDoc, selectedField);
+        const textElements = elements.filter(el => el.tagName !== 'IMG');
+        
+        if (textElements.length === 0) return () => {};
+
+        let isResizing = false;
+        let resizedElement: HTMLElement | null = null;
+        let startX = 0;
+        let startWidth = 0;
+
+        // 创建调整手柄（不再使用 data-field，改用 data-handle-for）
+        const createResizeHandle = (element: HTMLElement) => {
+          // 移除已存在的手柄（使用 data-handle-for 查找）
+          const existingHandle = iframeDoc.querySelector(`.width-resize-handle[data-handle-for="${selectedField}"]`);
+          if (existingHandle) {
+            existingHandle.remove();
+          }
+
+          const handle = iframeDoc.createElement('div');
+          handle.className = 'width-resize-handle';
+          // 使用 data-handle-for 而不是 data-field，避免被 querySelectorAll 误选
+          handle.setAttribute('data-handle-for', selectedField);
+          
+          // Dev 模式警告：如果检测到 resize handle 带 data-field，提示开发者
+          if (import.meta.env.DEV) {
+            const hasDataField = handle.hasAttribute('data-field');
+            if (hasDataField) {
+              console.warn('[TemplateGen] ⚠️ Resize handle should not have data-field attribute. Use data-handle-for instead.');
+            }
+          }
+          handle.style.cssText = `
+            position: absolute;
+            right: -6px;
+            top: 0;
+            bottom: 0;
+            width: 12px;
+            cursor: ew-resize;
+            z-index: 10000;
+            background-color: rgba(102, 126, 234, 0.3);
+            border-right: 3px solid #667eea;
+            pointer-events: auto;
+          `;
+          
+          // 将手柄添加到元素中
+          const currentPosition = iframeDoc.defaultView?.getComputedStyle(element).position || '';
+          if (currentPosition === 'static') {
+            element.style.position = 'relative';
+          }
+          element.appendChild(handle);
+          
+          return handle;
+        };
+
+        // 移除调整手柄（使用 data-handle-for 查找）
+        const removeResizeHandle = () => {
+          const handle = iframeDoc.querySelector(`.width-resize-handle[data-handle-for="${selectedField}"]`);
+          if (handle) {
+            handle.remove();
+          }
+        };
+
+        // 应用宽度
+        const applyWidth = (element: HTMLElement, width: number) => {
+          // 确保宽度是正数
+          const newWidth = Math.max(50, width); // 最小宽度 50px
+          element.style.width = `${newWidth}px`;
+          element.style.maxWidth = `${newWidth}px`;
+          element.style.overflow = 'hidden';
+          element.style.whiteSpace = 'nowrap';
+          element.style.textOverflow = 'ellipsis';
+        };
+
+        const handleMouseDown = (e: MouseEvent) => {
+          const target = e.target as HTMLElement;
+          if (!target || !target.classList.contains('width-resize-handle')) {
+            return;
+          }
+
+          isResizing = true;
+          resizedElement = target.parentElement as HTMLElement;
+          if (!resizedElement) return;
+
+          startX = e.clientX;
+          const computedStyle = iframeDoc.defaultView?.getComputedStyle(resizedElement);
+          startWidth = computedStyle ? parseFloat(computedStyle.width) || resizedElement.offsetWidth : resizedElement.offsetWidth;
+
+          e.preventDefault();
+          e.stopPropagation();
+        };
+
+        const handleMouseMove = (e: MouseEvent) => {
+          if (!isResizing || !resizedElement) return;
+
+          const deltaX = e.clientX - startX;
+
+          // 计算新的宽度（需要考虑 iframe 的缩放）
+          const iframeRect = previewIframeRef.current?.getBoundingClientRect();
+          const scaleX = iframeRect ? (iframeRect.width / (iframeSize?.width || 800)) : 1;
+
+          const newWidth = startWidth + (deltaX / scaleX);
+          applyWidth(resizedElement, newWidth);
+
+          e.preventDefault();
+        };
+
+        const handleMouseUp = () => {
+          if (isResizing) {
+            // 调整结束时提交快照（只在 undo ready 时记录）
+            if (undoReadyRef.current) {
+              setTimeout(() => {
+                commitSnapshot('width-resize-end');
+              }, 50);
+            }
+          }
+          isResizing = false;
+          resizedElement = null;
+        };
+
+        // 为所有文字元素添加调整手柄
+        textElements.forEach(element => {
+          // 创建调整手柄
+          const handle = createResizeHandle(element);
+          handle.addEventListener('mousedown', handleMouseDown);
+        });
+
+        // 全局鼠标移动和抬起事件，用于调整宽度
+        iframeDoc.addEventListener('mousemove', handleMouseMove);
+        iframeDoc.addEventListener('mouseup', handleMouseUp);
+
+        // 清理函数
+        return () => {
+          removeResizeHandle();
+          iframeDoc.removeEventListener('mousemove', handleMouseMove);
+          iframeDoc.removeEventListener('mouseup', handleMouseUp);
+        };
+      } catch (e) {
+        console.warn('设置宽度调整失败:', e);
+        return () => {};
+      }
+    };
+
+    // 延迟设置，确保 iframe 已完全加载
+    let cleanup: (() => void) | null = null;
+    const timer = setTimeout(() => {
+      cleanup = setupWidthResize();
+    }, 100);
+
+    return () => {
+      clearTimeout(timer);
+      if (cleanup) {
+        cleanup();
+      }
+    };
+  }, [selectedField, previewIframeRef, iframeSize, commitSnapshot, undoReadyRef, getValidFieldElements]);
 
   // 预览 iframe 加载完成
   const handlePreviewIframeLoad = useCallback(() => {
@@ -4262,6 +4508,25 @@ export const TemplateGenPage: React.FC = () => {
     <div className="template-gen-page">
       <div className="template-gen-header">
         <h1>Template Generator - 模板生成器</h1>
+        <label className="template-gen-header-template-name">
+          <input
+            ref={templateInputRef}
+            type="file"
+            accept=".zip,.html,.htm"
+            onChange={handleTemplateUpload}
+            className="template-gen-file-input"
+            style={{ display: 'none' }}
+          />
+          {htmlContent ? (
+            <span className="template-gen-header-template-name-text">
+              当前加载模板：{htmlFileName}
+            </span>
+          ) : (
+            <span className="template-gen-header-upload-btn">
+              上传模板
+            </span>
+          )}
+        </label>
       </div>
 
       {error && (
@@ -4275,8 +4540,70 @@ export const TemplateGenPage: React.FC = () => {
       <div className="template-gen-content">
         {/* 左侧预览区域（画布） */}
         <div className="template-gen-preview">
+          {/* 隐藏的文件输入框 - 用于点击画布上传 */}
+          <input
+            ref={templateInputRef}
+            type="file"
+            accept=".zip,.html,.htm"
+            onChange={handleTemplateUpload}
+            className="template-gen-file-input"
+            style={{ display: 'none' }}
+          />
           {htmlContent ? (
-            <div className="template-gen-preview-iframe-wrapper">
+            <div 
+              className="template-gen-preview-iframe-wrapper"
+              onClick={(e) => {
+                // 点击画布的padding区域（空白边缘）时触发文件选择
+                const target = e.target as HTMLElement;
+                // 如果点击的是wrapper本身（不是iframe、按钮或其他子元素），则触发
+                if (target === e.currentTarget) {
+                  templateInputRef.current?.click();
+                }
+              }}
+              onDoubleClick={(e) => {
+                // 双击画布任何区域都可以触发文件选择（包括iframe区域）
+                templateInputRef.current?.click();
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              style={{ cursor: 'pointer', position: 'relative' }}
+              title="点击画布边缘或双击画布重新加载模板"
+            >
+              {/* Undo/Redo 按钮 - 右上角 */}
+              <div className="template-gen-undo-redo-floating">
+                <button
+                  className="template-gen-undo-redo-btn template-gen-undo-btn"
+                  onClick={undoRedo.undo}
+                  disabled={!undoRedo.canUndo}
+                  title="撤销 (Ctrl+Z)"
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path
+                      d="M2 8C2 10.2091 3.79086 12 6 12H12M2 8L4 6M2 8L4 10"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+                <button
+                  className="template-gen-undo-redo-btn template-gen-redo-btn"
+                  onClick={undoRedo.redo}
+                  disabled={!undoRedo.canRedo}
+                  title="重做 (Ctrl+Y / Ctrl+Shift+Z)"
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path
+                      d="M14 8C14 10.2091 12.2091 12 10 12H4M14 8L12 6M14 8L12 10"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              </div>
               <iframe
                 ref={previewIframeRef}
                 className="template-gen-preview-iframe"
@@ -4521,60 +4848,6 @@ export const TemplateGenPage: React.FC = () => {
 
         {/* 中间控制面板（可替换字段） */}
         <div className="template-gen-controls">
-          {/* Undo/Redo 控制 */}
-          {htmlContent && (
-            <div className="template-gen-control-section">
-              <h3>撤销/重做</h3>
-              <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
-                <button
-                  className="template-gen-btn-secondary"
-                  onClick={undoRedo.undo}
-                  disabled={!undoRedo.canUndo}
-                  style={{ flex: 1 }}
-                >
-                  ↶ 撤销
-                </button>
-                <button
-                  className="template-gen-btn-secondary"
-                  onClick={undoRedo.redo}
-                  disabled={!undoRedo.canRedo}
-                  style={{ flex: 1 }}
-                >
-                  ↷ 重做
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* 模板上传 */}
-          <div className="template-gen-control-section">
-            <h3>上传模板</h3>
-            <label className="template-upload-label">
-              <input
-                ref={templateInputRef}
-                type="file"
-                accept=".zip,.html,.htm"
-                onChange={handleTemplateUpload}
-                className="template-gen-file-input"
-              />
-              <span className="template-gen-file-input-label">
-                {htmlContent ? `已加载模板 (${htmlFileName})` : "选择 ZIP 或 HTML 文件"}
-              </span>
-            </label>
-            {htmlContent && (
-              <div className="template-gen-info">
-                <p className="template-gen-info-text">
-                  {htmlFileName && <span>模板文件: {htmlFileName}</span>}
-                  {cssFileName && <span>CSS 文件: {cssFileName}</span>}
-                  {templateFields.length > 0 && <span>可替换字段: {templateFields.length} 个</span>}
-                </p>
-                <p className="template-gen-reload-hint">
-                  点击上方区域可重新加载新模板
-                </p>
-              </div>
-            )}
-          </div>
-
           {/* 模板尺寸（可折叠，包含模板尺寸、背景选择和缩放控制） */}
           <div className="template-gen-control-section template-size-collapsible">
             <div 
@@ -5058,56 +5331,89 @@ export const TemplateGenPage: React.FC = () => {
                       <div className="template-gen-field-controls">
                         {/* 位置和大小控制按钮 */}
                         <div className="template-gen-image-control-buttons" onClick={(e) => e.stopPropagation()}>
-                          {/* 方向键 - WASD 方式排列，靠左 */}
-                          <div className="template-gen-dpad-container">
-                            <button
-                              className="template-gen-image-control-btn template-gen-dpad-btn template-gen-dpad-up"
-                              title="向上 (W)"
-                              {...createContinuousAction(() => adjustElementTransform(f.name, 'up'), `${f.name}_up`)}
-                            >
-                              ↑
-                            </button>
-                            <div className="template-gen-dpad-middle">
+                          {/* 左侧：方向键和缩放按钮 */}
+                          <div className="template-gen-control-buttons-left">
+                            {/* 方向键 - WASD 方式排列 */}
+                            <div className="template-gen-dpad-container">
                               <button
-                                className="template-gen-image-control-btn template-gen-dpad-btn template-gen-dpad-left"
-                                title="向左 (A)"
-                                {...createContinuousAction(() => adjustElementTransform(f.name, 'left'), `${f.name}_left`)}
+                                className="template-gen-image-control-btn template-gen-dpad-btn template-gen-dpad-up"
+                                title="向上 (W)"
+                                {...createContinuousAction(() => adjustElementTransform(f.name, 'up'), `${f.name}_up`)}
                               >
-                                ←
+                                ↑
                               </button>
-                              <button
-                                className="template-gen-image-control-btn template-gen-dpad-btn template-gen-dpad-down"
-                                title="向下 (S)"
-                                {...createContinuousAction(() => adjustElementTransform(f.name, 'down'), `${f.name}_down`)}
-                              >
-                                ↓
-                              </button>
-                              <button
-                                className="template-gen-image-control-btn template-gen-dpad-btn template-gen-dpad-right"
-                                title="向右 (D)"
-                                {...createContinuousAction(() => adjustElementTransform(f.name, 'right'), `${f.name}_right`)}
-                              >
-                                →
-                              </button>
+                              <div className="template-gen-dpad-middle">
+                                <button
+                                  className="template-gen-image-control-btn template-gen-dpad-btn template-gen-dpad-left"
+                                  title="向左 (A)"
+                                  {...createContinuousAction(() => adjustElementTransform(f.name, 'left'), `${f.name}_left`)}
+                                >
+                                  ←
+                                </button>
+                                <button
+                                  className="template-gen-image-control-btn template-gen-dpad-btn template-gen-dpad-down"
+                                  title="向下 (S)"
+                                  {...createContinuousAction(() => adjustElementTransform(f.name, 'down'), `${f.name}_down`)}
+                                >
+                                  ↓
+                                </button>
+                                <button
+                                  className="template-gen-image-control-btn template-gen-dpad-btn template-gen-dpad-right"
+                                  title="向右 (D)"
+                                  {...createContinuousAction(() => adjustElementTransform(f.name, 'right'), `${f.name}_right`)}
+                                >
+                                  →
+                                </button>
+                              </div>
+                              {/* 缩放按钮 - 左右并排放在方向键下面 */}
+                              <div className="template-gen-zoom-container">
+                                <button
+                                  className="template-gen-image-control-btn template-gen-zoom-btn template-gen-zoom-in"
+                                  title="放大"
+                                  {...createContinuousAction(() => adjustElementTransform(f.name, 'zoomIn'), `${f.name}_zoomIn`)}
+                                >
+                                  +
+                                </button>
+                                <button
+                                  className="template-gen-image-control-btn template-gen-zoom-btn template-gen-zoom-out"
+                                  title="缩小"
+                                  {...createContinuousAction(() => adjustElementTransform(f.name, 'zoomOut'), `${f.name}_zoomOut`)}
+                                >
+                                  −
+                                </button>
+                              </div>
                             </div>
                           </div>
-                          {/* 缩放按钮 - 靠右，上面+，下面- */}
-                          <div className="template-gen-zoom-container">
-                            <button
-                              className="template-gen-image-control-btn template-gen-zoom-btn template-gen-zoom-in"
-                              title="放大"
-                              {...createContinuousAction(() => adjustElementTransform(f.name, 'zoomIn'), `${f.name}_zoomIn`)}
-                            >
-                              +
-                            </button>
-                            <button
-                              className="template-gen-image-control-btn template-gen-zoom-btn template-gen-zoom-out"
-                              title="缩小"
-                              {...createContinuousAction(() => adjustElementTransform(f.name, 'zoomOut'), `${f.name}_zoomOut`)}
-                            >
-                              −
-                            </button>
-                          </div>
+                          
+                          {/* 右侧：文字颜色选择器（仅对文字字段显示） */}
+                          {(() => {
+                            const isImageField = f.name.includes("_src") || f.name.includes("image") || f.name.includes("img");
+                            const isPriceField = f.name === 'sec_price_int' || f.name === 'sec_price_decimal';
+                            if (isImageField || isPriceField) return null;
+                            
+                            // 15个颜色：5列3行（必须包含白色、黑色、红色、金色，去掉绿色系）
+                            const colors = [
+                              '#FFFFFF', '#000000', '#FF0000', '#FFD700', '#FFA500', // 第一行：白色、黑色、红色、金色、橙色
+                              '#0000FF', '#87CEEB', '#4169E1', '#800080', '#DDA0DD', // 第二行：蓝色、天蓝色、皇家蓝、紫色、淡紫色
+                              '#FF6347', '#FF1493', '#D3D3D3', '#A9A9A9', '#CD853F', // 第三行：番茄红、深粉红、浅灰色、深灰色、赤褐色
+                            ];
+                            
+                            return (
+                              <div className="template-gen-color-picker">
+                                <div className="template-gen-color-grid">
+                                  {colors.map((color, index) => (
+                                    <button
+                                      key={index}
+                                      className="template-gen-color-item"
+                                      style={{ backgroundColor: color }}
+                                      onClick={() => updateTextColor(f.name, color)}
+                                      title={color}
+                                    />
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
                     )}

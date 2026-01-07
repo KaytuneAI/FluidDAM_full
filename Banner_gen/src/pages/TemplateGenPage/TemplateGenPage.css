@@ -42,6 +42,7 @@
   display: inline-block;
   padding: 0 8px;
   text-align: center;
+  flex: 1;
 }
 
 @keyframes gradientShift {
@@ -54,6 +55,60 @@
   100% {
     background-position: 0% 50%;
   }
+}
+
+/* Header 右侧模板名称 */
+.template-gen-header-template-name {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: pointer;
+  user-select: none;
+}
+
+.template-gen-header-template-name-text {
+  display: inline-block;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(0, 0, 0, 0.7);
+  padding: 6px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.9);
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.template-gen-header-template-name:hover .template-gen-header-template-name-text,
+.template-gen-header-template-name:hover .template-gen-header-upload-btn {
+  background: rgba(0, 212, 255, 0.1);
+  border-color: rgba(0, 212, 255, 0.4);
+  color: rgba(0, 212, 255, 1);
+}
+
+/* 上传模板按钮样式 */
+.template-gen-header-upload-btn {
+  display: inline-block;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(0, 0, 0, 0.7);
+  padding: 6px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.9);
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.template-gen-header-upload-btn:hover {
+  background: rgba(0, 212, 255, 0.1);
+  border-color: rgba(0, 212, 255, 0.4);
+  color: rgba(0, 212, 255, 1);
 }
 
 .template-gen-error-message {
@@ -187,17 +242,6 @@
   background: rgba(0, 212, 255, 0.05);
   border-radius: 4px;
   text-align: center;
-}
-  color: #10b981;
-  margin: 0;
-  line-height: 1.6;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.template-gen-info-text span {
-  display: block;
 }
 
 /* 模板尺寸折叠容器 */
@@ -858,19 +902,36 @@
 /* 图片控制按钮组 - 放在字段编辑器下方 */
 .template-gen-image-control-buttons {
   display: flex;
-  gap: 16px;
+  gap: 20px;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   margin-top: 12px;
-  padding: 8px 0;
+  padding: 12px;
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
-/* 方向键容器 - WASD 方式排列 */
+/* 左侧控制按钮组（方向键+缩放） */
+.template-gen-control-buttons-left {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* 方向键容器 - WASD 方式排列，缩放按钮在下面 */
 .template-gen-dpad-container {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 2px;
+  height: 100%;
+  justify-content: flex-start;
+}
+
+.template-gen-dpad-middle {
+  margin: 4px 0; /* 上下左右按钮和加减按钮之间的间距 */
 }
 
 .template-gen-dpad-middle {
@@ -879,22 +940,24 @@
   gap: 2px;
 }
 
-/* 缩放按钮容器 - 上下堆叠，靠右 */
+/* 缩放按钮容器 - 左右并排，放在方向键下面 */
 .template-gen-zoom-container {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 2px;
+  margin-top: 8px; /* 增加与方向键的间距 */
+  justify-content: center;
 }
 
 .template-gen-image-control-btn {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: 1px solid rgba(0, 212, 255, 0.3);
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.95);
   color: rgba(0, 0, 0, 0.7);
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
   line-height: 1;
   cursor: pointer;
@@ -921,8 +984,8 @@
 
 /* 方向键按钮 - WASD 布局 */
 .template-gen-dpad-btn {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
 }
 
 .template-gen-dpad-up {
@@ -944,16 +1007,77 @@
 
 /* 缩放按钮 */
 .template-gen-zoom-btn {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
 }
 
 .template-gen-zoom-in {
-  border-radius: 4px 4px 0 0;
+  border-radius: 4px;
 }
 
 .template-gen-zoom-out {
-  border-radius: 0 0 4px 4px;
+  border-radius: 4px;
+}
+
+/* 文字颜色选择器 */
+.template-gen-color-picker {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  justify-content: center;
+  background: #f9fafb;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.template-gen-color-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 4px;
+  width: 100%;
+  max-width: 160px;
+  height: 100%;
+}
+
+.template-gen-color-item {
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1.5px solid rgba(0, 0, 0, 0.15);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 0;
+  background: none;
+  position: relative;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.template-gen-color-item:hover {
+  transform: scale(1.1);
+  border-color: rgba(0, 212, 255, 0.6);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  z-index: 1;
+}
+
+.template-gen-color-item:active {
+  transform: scale(0.95);
+}
+
+/* 选中状态 - 显示浅灰色背景和阴影 */
+.template-gen-color-item.selected {
+  background: #f3f4f6;
+  border-color: rgba(0, 0, 0, 0.2);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+/* 白色背景的颜色项需要特殊处理边框 */
+.template-gen-color-item[style*="background-color: rgb(255, 255, 255)"],
+.template-gen-color-item[style*="background-color: #ffffff"],
+.template-gen-color-item[style*="background-color: #FFFFFF"] {
+  border-color: rgba(0, 0, 0, 0.25);
 }
 
 .template-gen-btn-secondary {
@@ -1024,6 +1148,82 @@
   justify-content: center;
   width: 100%;
   padding: 8px;
+  flex-shrink: 0;
+  min-height: 200px;
+}
+
+/* 画布边缘可点击区域提示 */
+.template-gen-preview-iframe-wrapper::before {
+  content: '点击画布边缘重新加载模板';
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 11px;
+  pointer-events: none;
+  z-index: 5;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.template-gen-preview-iframe-wrapper:hover::before {
+  opacity: 1;
+}
+
+/* Undo/Redo 浮动按钮 - 右上角，贴近画布 */
+.template-gen-undo-redo-floating {
+  position: absolute;
+  top: 0px;
+  right: 0px;
+  display: flex;
+  gap: 4px;
+  z-index: 10;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 0 0 0 6px;
+  padding: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  backdrop-filter: blur(8px);
+}
+
+.template-gen-undo-redo-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  background: #ffffff;
+  color: #374151;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.template-gen-undo-redo-btn:hover:not(:disabled) {
+  background: #f3f4f6;
+  border-color: rgba(0, 212, 255, 0.4);
+  color: rgba(0, 212, 255, 1);
+  transform: scale(1.05);
+}
+
+.template-gen-undo-redo-btn:active:not(:disabled) {
+  transform: scale(0.95);
+  background: #e5e7eb;
+}
+
+.template-gen-undo-redo-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.template-gen-undo-redo-btn svg {
   flex-shrink: 0;
 }
 
