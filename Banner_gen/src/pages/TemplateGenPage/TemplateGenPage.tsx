@@ -64,6 +64,9 @@ export const TemplateGenPage: React.FC = () => {
   const wheelDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   const undoRedo = useUndoRedo<TemplateSnapshot>();
+
+  // 用于存储每个字段列表项的 ref，用于滚动到视区
+  const fieldItemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   
   // 文生图相关状态
   const [showBackgroundOnly, setShowBackgroundOnly] = useState<boolean>(false); // 仅显示背景图
@@ -1998,6 +2001,50 @@ export const TemplateGenPage: React.FC = () => {
       }, 0);
     }
   }, [selectedField, highlightElementInIframe, clearAllFieldHighlights]);
+
+  // 当选中字段时，将选中的字段移到列表最上面，并滚动到视区
+  useEffect(() => {
+    if (!selectedField || templateFields.length === 0) return;
+
+    // 检查选中的字段是否在 templateFields 中
+    const fieldIndex = templateFields.findIndex(f => f.name === selectedField);
+    if (fieldIndex === -1) {
+      // 如果不在列表中（可能是嵌套外层的字段），只尝试滚动（如果之前有记录）
+      setTimeout(() => {
+        const fieldItem = fieldItemRefs.current.get(selectedField);
+        if (fieldItem) {
+          fieldItem.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'nearest',
+            inline: 'nearest'
+          });
+        }
+      }, 100);
+      return;
+    }
+
+    // 如果选中的字段不在第一位，将其移到最上面
+    if (fieldIndex > 0) {
+      setTemplateFields(prevFields => {
+        const newFields = [...prevFields];
+        const [selectedFieldData] = newFields.splice(fieldIndex, 1);
+        newFields.unshift(selectedFieldData);
+        return newFields;
+      });
+    }
+
+    // 滚动到该元素（延迟一点确保 DOM 更新完成）
+    setTimeout(() => {
+      const fieldItem = fieldItemRefs.current.get(selectedField);
+      if (fieldItem) {
+        fieldItem.scrollIntoView({ 
+          behavior: 'smooth', 
+          block: 'nearest',
+          inline: 'nearest'
+        });
+      }
+    }, 100);
+  }, [selectedField]); // 只依赖 selectedField，避免无限循环
 
   // 为选中的元素添加拖拽功能（复用 BannerGen 的逻辑）
   useEffect(() => {
@@ -4845,6 +4892,13 @@ export const TemplateGenPage: React.FC = () => {
                 {templateFields.map((f) => (
                   <div
                     key={f.name}
+                    ref={(el) => {
+                      if (el) {
+                        fieldItemRefs.current.set(f.name, el);
+                      } else {
+                        fieldItemRefs.current.delete(f.name);
+                      }
+                    }}
                     className={`template-gen-field-item ${selectedField === f.name ? 'selected' : ''}`}
                     onClick={() => handleFieldClick(f.name)}
                   >

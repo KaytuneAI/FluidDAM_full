@@ -65,6 +65,53 @@ export const BannerBatchPage: React.FC = () => {
     editedValuesRef.current = editedValues;
   }, [editedValues]);
 
+  // 用于存储每个字段列表项的 ref，用于滚动到视区
+  const fieldItemRefs = useRef<Map<string, HTMLLIElement>>(new Map());
+
+  // 当选中字段时，将选中的字段移到列表最上面，并滚动到视区
+  useEffect(() => {
+    if (!selectedField || templateFields.length === 0) return;
+
+    // 检查选中的字段是否在 templateFields 中
+    const fieldIndex = templateFields.findIndex(f => f.name === selectedField);
+    if (fieldIndex === -1) {
+      // 如果不在列表中（可能是嵌套外层的字段），只尝试滚动（如果之前有记录）
+      setTimeout(() => {
+        const fieldItem = fieldItemRefs.current.get(selectedField);
+        if (fieldItem) {
+          fieldItem.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'nearest',
+            inline: 'nearest'
+          });
+        }
+      }, 100);
+      return;
+    }
+
+    // 如果选中的字段不在第一位，将其移到最上面
+    if (fieldIndex > 0) {
+      setTemplateFields(prevFields => {
+        const newFields = [...prevFields];
+        const [selectedFieldData] = newFields.splice(fieldIndex, 1);
+        newFields.unshift(selectedFieldData);
+        return newFields;
+      });
+    }
+
+    // 滚动到该元素（延迟一点确保 DOM 更新完成）
+    setTimeout(() => {
+      const fieldItem = fieldItemRefs.current.get(selectedField);
+      if (fieldItem) {
+        fieldItem.scrollIntoView({ 
+          behavior: 'smooth', 
+          block: 'nearest',
+          inline: 'nearest'
+        });
+      }
+    }, 100);
+  }, [selectedField]); // 只依赖 selectedField，避免无限循环
+
   // 编辑/预览模式状态（false=编辑模式，true=预览模式）
   const [isPreviewMode, setIsPreviewMode] = useState<boolean>(false);
   
@@ -1447,12 +1494,12 @@ export const BannerBatchPage: React.FC = () => {
     const target = e.target as HTMLElement;
     if (!target) return;
 
-    // 向上查找具有 data-field 属性的元素
+    // 向上查找具有 data-field 属性的元素（增加查找层数，提高灵敏度）
     let element: HTMLElement | null = target;
     let fieldName: string | null = null;
     
-    // 最多向上查找5层
-    for (let i = 0; i < 5 && element; i++) {
+    // 增加向上查找层数到15层，确保能找到嵌套较深的元素（和 TemplateGenPage 一致）
+    for (let i = 0; i < 15 && element; i++) {
       fieldName = element.getAttribute('data-field');
       if (fieldName) {
         break;
@@ -1832,15 +1879,12 @@ export const BannerBatchPage: React.FC = () => {
     }
   }, [isPreviewMode, currentIndex, getActiveIndex, multiIframeRefs, previewIframeRef, iframeRef, commitSnapshot]);
 
-  // 为选中的图片字段添加拖拽和缩放功能
+  // 为选中的元素添加拖拽和缩放功能（支持所有元素，不仅仅是图片，和 TemplateGenPage 一致）
   useEffect(() => {
     // 预览模式下不设置拖拽和缩放功能
     if (isPreviewMode) return;
     
     if (!selectedField) return;
-    
-    const isImageField = selectedField.includes("_src") || selectedField.includes("image") || selectedField.includes("img");
-    if (!isImageField) return;
 
     // 获取所有需要设置事件监听器的 iframe
     const iframesToSetup: HTMLIFrameElement[] = [];
@@ -1862,15 +1906,13 @@ export const BannerBatchPage: React.FC = () => {
         const latestCurrentIndex = currentIndexRef.current;
         const dataIndex = latestCurrentIndex;
 
-        // 找到所有具有相同 data-field 的图片
-        const imgs = Array.from(iframeDoc.querySelectorAll(`[data-field="${selectedField}"]`)) as HTMLImageElement[];
-        const imageElements = imgs.filter(el => el.tagName === 'IMG');
+        // 找到所有具有相同 data-field 的元素（支持图片和文本，和 TemplateGenPage 一致）
+        const elements = Array.from(iframeDoc.querySelectorAll(`[data-field="${selectedField}"]`)) as HTMLElement[];
         
-        if (imageElements.length === 0) return () => {}; // 返回空清理函数
+        if (elements.length === 0) return () => {}; // 返回空清理函数
 
         let isDragging = false;
-        let draggedImg: HTMLImageElement | null = null;
-        let draggedImgIndex = -1;
+        let draggedElement: HTMLElement | null = null;
         let startX = 0;
         let startY = 0;
         let startTranslateX = 0;
@@ -1892,47 +1934,55 @@ export const BannerBatchPage: React.FC = () => {
           return { tx, ty, s };
         };
 
-        // 获取图片在数组中的索引（通过 src 或位置）
-        const getImageIndex = (img: HTMLImageElement): number => {
-          return imageElements.indexOf(img);
-        };
-
-        const applyTransform = (img: HTMLImageElement, tx: number, ty: number, s: number) => {
+        const applyTransform = (el: HTMLElement, tx: number, ty: number, s: number) => {
           const transform = `translate(${tx}px, ${ty}px) scale(${s})`;
-          img.style.transform = transform;
-          img.style.transformOrigin = 'center center';
-          img.style.cursor = 'move';
+          el.style.transform = transform;
+          el.style.transformOrigin = 'center center';
+          el.style.cursor = 'move';
 
           // 注意：不在拖拽时更新导出 iframe
           // 导出 iframe 只在批量生成时使用，每次生成时会重新应用数据，包括 transform
           // 在拖拽时更新导出 iframe 可能导致其他记录的数据被错误修改
 
-          // 保存到 editedValues（使用索引区分不同的图片）
-          const imgIndex = getImageIndex(img);
-          const transformKey = `${selectedField}_transform_${imgIndex}`;
-          setEditedValues(prev => ({
-            ...prev,
-            [dataIndex]: {
-              ...prev[dataIndex],
-              [transformKey]: transform,
-            }
-          }));
+          // 保存到 editedValues
+          // 对于图片，使用索引区分不同的图片；对于其他元素，不使用索引
+          const isImage = el.tagName === 'IMG';
+          if (isImage) {
+            const imgIndex = Array.from(iframeDoc.querySelectorAll(`[data-field="${selectedField}"]`)).filter(el => el.tagName === 'IMG').indexOf(el);
+            const transformKey = `${selectedField}_transform_${imgIndex}`;
+            setEditedValues(prev => ({
+              ...prev,
+              [dataIndex]: {
+                ...prev[dataIndex],
+                [transformKey]: transform,
+              }
+            }));
+          } else {
+            // 对于非图片元素，也保存 transform（如果需要的话）
+            const transformKey = `${selectedField}_transform`;
+            setEditedValues(prev => ({
+              ...prev,
+              [dataIndex]: {
+                ...prev[dataIndex],
+                [transformKey]: transform,
+              }
+            }));
+          }
         };
 
         const handleMouseDown = (e: MouseEvent) => {
           if (e.button !== 0) return; // 只处理左键
           const target = e.target as HTMLElement;
-          if (!target || target.tagName !== 'IMG' || !target.hasAttribute(`data-field`) || target.getAttribute('data-field') !== selectedField) {
+          if (!target || !target.hasAttribute('data-field') || target.getAttribute('data-field') !== selectedField) {
             return;
           }
 
           isDragging = true;
-          draggedImg = target as HTMLImageElement;
-          draggedImgIndex = getImageIndex(draggedImg);
+          draggedElement = target;
           startX = e.clientX;
           startY = e.clientY;
 
-          const currentTransform = draggedImg.style.transform || '';
+          const currentTransform = draggedElement.style.transform || '';
           const parsed = parseTransform(currentTransform);
           startTranslateX = parsed.tx;
           startTranslateY = parsed.ty;
@@ -1943,7 +1993,7 @@ export const BannerBatchPage: React.FC = () => {
         };
 
         const handleMouseMove = (e: MouseEvent) => {
-          if (!isDragging || !draggedImg) return;
+          if (!isDragging || !draggedElement) return;
 
           const deltaX = e.clientX - startX;
           const deltaY = e.clientY - startY;
@@ -1956,8 +2006,8 @@ export const BannerBatchPage: React.FC = () => {
           const newTx = startTranslateX + (deltaX / scaleX);
           const newTy = startTranslateY + (deltaY / scaleY);
 
-          // 只对当前拖拽的图片应用 transform
-          applyTransform(draggedImg, newTx, newTy, currentScale);
+          // 对当前拖拽的元素应用 transform
+          applyTransform(draggedElement, newTx, newTy, currentScale);
           e.preventDefault();
         };
 
@@ -1971,29 +2021,28 @@ export const BannerBatchPage: React.FC = () => {
             }
           }
           isDragging = false;
-          draggedImg = null;
-          draggedImgIndex = -1;
+          draggedElement = null;
         };
 
         const handleWheel = (e: WheelEvent) => {
           const target = e.target as HTMLElement;
-          if (!target || target.tagName !== 'IMG' || !target.hasAttribute(`data-field`) || target.getAttribute('data-field') !== selectedField) {
+          if (!target || !target.hasAttribute(`data-field`) || target.getAttribute('data-field') !== selectedField) {
             return;
           }
 
           e.preventDefault();
           e.stopPropagation();
 
-          const img = target as HTMLImageElement;
-          const currentTransform = img.style.transform || '';
+          const el = target;
+          const currentTransform = el.style.transform || '';
           const parsed = parseTransform(currentTransform);
           
           const scaleStep = 0.05;
           const delta = e.deltaY > 0 ? -scaleStep : scaleStep;
           const newScale = Math.max(0.1, Math.min(3, parsed.s + delta));
 
-          // 只对当前滚轮的图片应用缩放
-          applyTransform(img, parsed.tx, parsed.ty, newScale);
+          // 对当前滚轮的元素应用缩放
+          applyTransform(el, parsed.tx, parsed.ty, newScale);
 
           // 清除之前的定时器
           if (wheelDebounceTimer) {
@@ -2009,32 +2058,32 @@ export const BannerBatchPage: React.FC = () => {
           }, 300);
         };
 
-        // 添加事件监听器
-        const mouseEnterHandlers: Map<HTMLImageElement, (e: MouseEvent) => void> = new Map();
-        const mouseLeaveHandlers: Map<HTMLImageElement, (e: MouseEvent) => void> = new Map();
+        // 添加事件监听器（支持所有元素，不仅仅是图片）
+        const mouseEnterHandlers: Map<HTMLElement, (e: MouseEvent) => void> = new Map();
+        const mouseLeaveHandlers: Map<HTMLElement, (e: MouseEvent) => void> = new Map();
         
-        imageElements.forEach(img => {
-          img.addEventListener('mousedown', handleMouseDown);
-          img.style.userSelect = 'none';
+        elements.forEach(el => {
+          el.addEventListener('mousedown', handleMouseDown);
+          el.style.userSelect = 'none';
           
-          // 鼠标移动到图片上时显示 move 光标
+          // 鼠标移动到元素上时显示 move 光标
           const enterHandler = (e: MouseEvent) => {
             (e.target as HTMLElement).style.cursor = 'move';
           };
-          img.addEventListener('mouseenter', enterHandler);
-          mouseEnterHandlers.set(img, enterHandler);
+          el.addEventListener('mouseenter', enterHandler);
+          mouseEnterHandlers.set(el, enterHandler);
           
-          // 鼠标离开图片时恢复默认光标
+          // 鼠标离开元素时恢复默认光标
           const leaveHandler = (e: MouseEvent) => {
             if (!isDragging) {
               (e.target as HTMLElement).style.cursor = '';
             }
           };
-          img.addEventListener('mouseleave', leaveHandler);
-          mouseLeaveHandlers.set(img, leaveHandler);
+          el.addEventListener('mouseleave', leaveHandler);
+          mouseLeaveHandlers.set(el, leaveHandler);
           
-          // 滚轮缩放只在图片上生效
-          img.addEventListener('wheel', handleWheel, { passive: false });
+          // 滚轮缩放（支持所有元素）
+          el.addEventListener('wheel', handleWheel, { passive: false });
         });
 
         // 全局鼠标移动和抬起事件，用于拖拽
@@ -2049,22 +2098,22 @@ export const BannerBatchPage: React.FC = () => {
             wheelDebounceTimer = null;
           }
 
-          imageElements.forEach(img => {
-            img.removeEventListener('mousedown', handleMouseDown);
-            img.style.cursor = '';
-            img.style.userSelect = '';
+          elements.forEach(el => {
+            el.removeEventListener('mousedown', handleMouseDown);
+            el.style.cursor = '';
+            el.style.userSelect = '';
             
             // 移除鼠标进入和离开事件
-            const enterHandler = mouseEnterHandlers.get(img);
-            const leaveHandler = mouseLeaveHandlers.get(img);
+            const enterHandler = mouseEnterHandlers.get(el);
+            const leaveHandler = mouseLeaveHandlers.get(el);
             if (enterHandler) {
-              img.removeEventListener('mouseenter', enterHandler);
+              el.removeEventListener('mouseenter', enterHandler);
             }
             if (leaveHandler) {
-              img.removeEventListener('mouseleave', leaveHandler);
+              el.removeEventListener('mouseleave', leaveHandler);
             }
             
-            img.removeEventListener('wheel', handleWheel);
+            el.removeEventListener('wheel', handleWheel);
           });
           mouseEnterHandlers.clear();
           mouseLeaveHandlers.clear();
@@ -3606,6 +3655,13 @@ export const BannerBatchPage: React.FC = () => {
                   return (
                     <li
                       key={f.name}
+                      ref={(el) => {
+                        if (el) {
+                          fieldItemRefs.current.set(f.name, el);
+                        } else {
+                          fieldItemRefs.current.delete(f.name);
+                        }
+                      }}
                       className={`template-field-item ${isSelected ? "selected" : ""}`}
                     >
                       <div
