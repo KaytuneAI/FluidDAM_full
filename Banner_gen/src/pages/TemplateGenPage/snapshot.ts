@@ -252,20 +252,86 @@ export function restoreSnapshot(
   
   // 恢复所有元素
   Object.values(snapshot.elements).forEach((elementSnap) => {
+    // 对于 IMG 元素，需要恢复所有匹配的图片（因为可能有多个图片有相同的 data-field）
+    if (elementSnap.tag === 'IMG') {
+      const allElements = Array.from(iframeDoc.querySelectorAll(`[data-field="${elementSnap.key}"]`)) as HTMLElement[];
+      const imgElements = allElements.filter(el => el.tagName === 'IMG') as HTMLImageElement[];
+      
+      if (imgElements.length > 0 && elementSnap.src) {
+        // 恢复所有图片的 src（使用快照中保存的 src）
+        imgElements.forEach((img) => {
+          img.src = elementSnap.src!;
+        });
+      }
+      
+      // 恢复样式（对所有图片应用相同的样式）
+      imgElements.forEach((img) => {
+        const style = elementSnap.style;
+        
+        // 获取当前样式，准备合并
+        const currentStyle = img.getAttribute('style') || '';
+        const styleParts = currentStyle.split(';').filter(part => {
+          const trimmed = part.trim();
+          if (!trimmed) return false;
+          // 移除我们要恢复的样式属性，避免冲突
+          return !trimmed.startsWith('transform') &&
+                 !trimmed.startsWith('position') &&
+                 !trimmed.startsWith('left') &&
+                 !trimmed.startsWith('top') &&
+                 !trimmed.startsWith('right') &&
+                 !trimmed.startsWith('bottom') &&
+                 !trimmed.startsWith('width') &&
+                 !trimmed.startsWith('height') &&
+                 !trimmed.startsWith('opacity') &&
+                 !trimmed.startsWith('z-index');
+        });
+        
+        const newStyleParts: string[] = [...styleParts];
+        
+        // 位置和尺寸
+        if (style.position) newStyleParts.push(`position: ${style.position}`);
+        if (style.left) newStyleParts.push(`left: ${style.left}`);
+        if (style.top) newStyleParts.push(`top: ${style.top}`);
+        if (style.right) newStyleParts.push(`right: ${style.right}`);
+        if (style.bottom) newStyleParts.push(`bottom: ${style.bottom}`);
+        if (style.width) newStyleParts.push(`width: ${style.width}`);
+        if (style.height) newStyleParts.push(`height: ${style.height}`);
+        
+        // transform
+        if (style.transform) newStyleParts.push(`transform: ${style.transform}`);
+        if (style.transformOrigin) newStyleParts.push(`transform-origin: ${style.transformOrigin}`);
+        
+        if (style.opacity) newStyleParts.push(`opacity: ${style.opacity}`);
+        if (style.zIndex) newStyleParts.push(`z-index: ${style.zIndex}`);
+        
+        // 设置新的样式
+        const newStyle = newStyleParts.join('; ').trim();
+        if (newStyle) {
+          img.setAttribute('style', newStyle);
+        } else {
+          img.removeAttribute('style');
+        }
+        
+        // 恢复 className
+        if (elementSnap.className !== undefined) {
+          img.className = elementSnap.className;
+        }
+      });
+      
+      return; // 已处理完 IMG 元素，继续下一个
+    }
+    
+    // 非 IMG 元素的处理
     const element = iframeDoc.querySelector(`[data-field="${elementSnap.key}"]`) as HTMLElement;
     if (!element) return;
     
     // 恢复内容
-    if (elementSnap.tag === 'IMG' && elementSnap.src) {
-      (element as HTMLImageElement).src = elementSnap.src;
-    } else {
-      // 优先使用 innerHTML（保留 DOM 结构，如 span/br 等）
-      // 只有在 html 不存在时，才 fallback 到 textContent
-      if (elementSnap.html !== undefined) {
-        element.innerHTML = elementSnap.html;
-      } else if (elementSnap.text !== undefined) {
-        element.textContent = elementSnap.text;
-      }
+    // 优先使用 innerHTML（保留 DOM 结构，如 span/br 等）
+    // 只有在 html 不存在时，才 fallback 到 textContent
+    if (elementSnap.html !== undefined) {
+      element.innerHTML = elementSnap.html;
+    } else if (elementSnap.text !== undefined) {
+      element.textContent = elementSnap.text;
     }
     
     // 恢复 className
@@ -310,7 +376,14 @@ export function restoreSnapshot(
     if (style.top) newStyleParts.push(`top: ${style.top}`);
     if (style.right) newStyleParts.push(`right: ${style.right}`);
     if (style.bottom) newStyleParts.push(`bottom: ${style.bottom}`);
-    if (style.width) newStyleParts.push(`width: ${style.width}`);
+    if (style.width) {
+      newStyleParts.push(`width: ${style.width}`);
+      newStyleParts.push(`max-width: ${style.width}`);
+      // 如果设置了宽度，确保文字不换行
+      newStyleParts.push(`white-space: nowrap`);
+      newStyleParts.push(`overflow: hidden`);
+      newStyleParts.push(`text-overflow: ellipsis`);
+    }
     if (style.height) newStyleParts.push(`height: ${style.height}`);
     
     // transform

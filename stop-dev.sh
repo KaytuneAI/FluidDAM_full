@@ -95,3 +95,7 @@ echo -e "${GREEN}All applications stopped!${NC}"
 echo "========================================"
 echo ""
 
+
+
+
+

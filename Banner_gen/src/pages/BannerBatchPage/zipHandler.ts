@@ -10,6 +10,17 @@ import {
   buildInlineHtml,
 } from "./htmlUtils";
 
+/**
+ * 检查一个元素是否是嵌套的外层（即它的子元素中也有 data-field）
+ * 如果是嵌套的外层，返回 true；如果是最底层，返回 false
+ */
+function isNestedOuterElement(el: HTMLElement): boolean {
+  // 检查该元素的所有子元素（包括所有后代）中是否有带 data-field 的
+  // querySelector 在元素上调用时，只会在后代中查找，不包括元素本身
+  const childWithDataField = el.querySelector('[data-field]');
+  return childWithDataField !== null;
+}
+
 export interface ZipProcessResult {
   html: string;
   css: string;
@@ -177,6 +188,11 @@ export const processZipFile = async (file: File): Promise<ZipProcessResult> => {
   doc.querySelectorAll<HTMLElement>("[data-field]").forEach((el) => {
     const name = el.getAttribute("data-field");
     if (!name) return;
+
+    // 如果该元素是嵌套的外层（子元素中也有 data-field），则跳过
+    if (isNestedOuterElement(el)) {
+      return;
+    }
 
     if (!fieldMap.has(name)) {
       const label = el.getAttribute("data-label") || undefined;

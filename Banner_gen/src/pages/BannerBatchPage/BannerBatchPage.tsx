@@ -508,7 +508,7 @@ export const BannerBatchPage: React.FC = () => {
           // 获取原始 JSON 数据，用于比较
           const originalData = jsonData[activeIndex] || {};
           
-          // 从恢复后的 iframe 中读取所有字段的实际值，并与原始数据比较
+          // 从快照中直接读取值，而不是从恢复后的 DOM 读取（避免路径格式差异导致判断失败）
           Object.entries(snapshot.elements).forEach(([fieldName, elementSnap]) => {
             // 跳过价格字段，后面单独处理
             if (fieldName === 'sec_price_int' || fieldName === 'sec_price_decimal') {
@@ -519,37 +519,71 @@ export const BannerBatchPage: React.FC = () => {
             if (elements.length === 0) return;
             
             if (elementSnap.tag === 'IMG') {
-              // 对于图片元素，读取 src 和 transform
-              const imgs = elements.filter(el => el.tagName === 'IMG') as HTMLImageElement[];
-              
-              imgs.forEach((img, imgIndex) => {
-                // 读取图片的 src
-                const actualSrc = img.src || '';
+              // 对于图片元素，使用快照中保存的 src（而不是从 DOM 读取）
+              // 这样可以避免绝对路径 vs 相对路径的格式差异问题
+              if (elementSnap.src) {
+                const snapshotSrc = elementSnap.src;
                 const originalSrc = originalData[fieldName];
                 
-                // 只有当 src 与原始 JSON 数据不同时，才保存到 editedValues
-                if (actualSrc && actualSrc !== originalSrc && String(originalSrc) !== actualSrc) {
-                  updatedEditedValues[fieldName] = actualSrc;
-                }
+                // 标准化路径比较（移除协议和域名，只比较路径部分）
+                const normalizePath = (path: string): string => {
+                  try {
+                    // 如果是绝对 URL，提取路径部分
+                    if (path.startsWith('http://') || path.startsWith('https://')) {
+                      const url = new URL(path);
+                      return url.pathname;
+                    }
+                    // 如果是相对路径，移除开头的斜杠
+                    return path.startsWith('/') ? path.substring(1) : path;
+                  } catch {
+                    return path;
+                  }
+                };
                 
-                // 读取 transform（transform 总是保存，因为原始数据中没有 transform）
+                const normalizedSnapshotSrc = normalizePath(snapshotSrc);
+                const normalizedOriginalSrc = originalSrc ? normalizePath(String(originalSrc)) : '';
+                
+                // 只有当 src 与原始 JSON 数据不同时，才保存到 editedValues
+                if (normalizedSnapshotSrc !== normalizedOriginalSrc) {
+                  // 保存快照中的原始 src（保持原始格式）
+                  updatedEditedValues[fieldName] = snapshotSrc;
+                } else {
+                  // 如果与原始数据相同，确保 editedValues 中不包含该字段（使用原始数据）
+                  // 不添加到 updatedEditedValues，这样会从 editedValues 中移除
+                }
+              }
+              
+              // 读取 transform（从快照的 style 中读取，而不是从 DOM）
+              const imgs = elements.filter(el => el.tagName === 'IMG') as HTMLImageElement[];
+              imgs.forEach((img, imgIndex) => {
                 const transformKey = `${fieldName}_transform_${imgIndex}`;
-                const actualTransform = img.style.transform || '';
-                if (actualTransform) {
-                  updatedEditedValues[transformKey] = actualTransform;
+                // 从快照的 style 中读取 transform
+                const snapshotTransform = elementSnap.style.transform || '';
+                if (snapshotTransform) {
+                  updatedEditedValues[transformKey] = snapshotTransform;
+                } else {
+                  // 如果快照中没有 transform，确保 editedValues 中不包含该字段
+                  // 不添加到 updatedEditedValues，这样会从 editedValues 中移除
                 }
               });
             } else {
-              // 对于文字元素，读取文本内容
-              const firstElement = elements[0];
-              if (firstElement) {
-                // 优先使用 textContent，如果没有则使用 innerText
-                const actualText = firstElement.textContent?.trim() || firstElement.innerText?.trim() || '';
+              // 对于文字元素，使用快照中保存的文本（而不是从 DOM 读取）
+              // 优先使用 html，如果没有则使用 text
+              const snapshotText = elementSnap.html !== undefined 
+                ? elementSnap.html 
+                : (elementSnap.text !== undefined ? elementSnap.text : '');
+              
+              if (snapshotText !== undefined) {
+                // 从快照的文本中提取纯文本内容（用于比较）
+                const tempDiv = iframeDoc2.createElement('div');
+                tempDiv.innerHTML = snapshotText;
+                const snapshotTextContent = tempDiv.textContent?.trim() || tempDiv.innerText?.trim() || '';
                 const originalText = originalData[fieldName];
                 
                 // 只有当文本与原始 JSON 数据不同时，才保存到 editedValues
-                if (actualText && actualText !== originalText && String(originalText) !== actualText) {
-                  updatedEditedValues[fieldName] = actualText;
+                if (snapshotTextContent && snapshotTextContent !== originalText && String(originalText) !== snapshotTextContent) {
+                  // 保存快照中的原始文本（保留 HTML 结构）
+                  updatedEditedValues[fieldName] = snapshotText;
                 }
               }
             }
@@ -598,6 +632,12 @@ export const BannerBatchPage: React.FC = () => {
             Object.keys(updatedEditedValues).length,
             'transform 键数量:', 
             Object.keys(updatedEditedValues).filter(k => k.includes('_transform_')).length);
+          console.log('[BannerBatch] 恢复后的 editedValues 详情:', {
+            activeIndex,
+            updatedEditedValues,
+            product_main_src: updatedEditedValues.product_main_src,
+            product_main_src_transforms: Object.keys(updatedEditedValues).filter(k => k.startsWith('product_main_src_transform_')),
+          });
         } catch (e) {
           console.error('[BannerBatch] 恢复元素失败:', e);
         } finally {
@@ -2058,6 +2098,215 @@ export const BannerBatchPage: React.FC = () => {
     };
   }, [selectedField, currentIndex, isPreviewMode, getActiveIndex, multiIframeRefs, previewIframeRef, iframeRef, iframeSize, setEditedValues, commitSnapshot]);
 
+  // 为选中的文字字段添加宽度调整功能
+  useEffect(() => {
+    // 预览模式下不设置宽度调整功能
+    if (isPreviewMode) return;
+    
+    if (!selectedField) return;
+    
+    // 只处理非图片字段（文字字段）
+    const isImageField = selectedField.includes("_src") || selectedField.includes("image") || selectedField.includes("img");
+    if (isImageField) return;
+    
+    // 跳过价格字段（价格字段有特殊结构）
+    if (selectedField === 'sec_price_int' || selectedField === 'sec_price_decimal') return;
+
+    // 获取所有需要设置事件监听器的 iframe
+    const iframesToSetup: HTMLIFrameElement[] = [];
+    
+    // 编辑模式：只设置预览 iframe
+    if (previewIframeRef.current) {
+      iframesToSetup.push(previewIframeRef.current);
+    }
+    
+    if (iframesToSetup.length === 0) return;
+
+    const setupWidthResize = (targetIframe: HTMLIFrameElement, iframeIndex: number) => {
+      try {
+        const iframeDoc = targetIframe?.contentDocument || targetIframe?.contentWindow?.document;
+        if (!iframeDoc) return () => {}; // 返回空清理函数
+        
+        // 计算当前 iframe 对应的数据索引
+        const latestCurrentIndex = currentIndexRef.current;
+        const dataIndex = latestCurrentIndex;
+
+        // 找到所有具有相同 data-field 的元素
+        const elements = Array.from(iframeDoc.querySelectorAll(`[data-field="${selectedField}"]`)) as HTMLElement[];
+        const textElements = elements.filter(el => el.tagName !== 'IMG');
+        
+        if (textElements.length === 0) return () => {}; // 返回空清理函数
+
+        let isResizing = false;
+        let resizedElement: HTMLElement | null = null;
+        let startX = 0;
+        let startWidth = 0;
+
+        // 创建调整手柄
+        const createResizeHandle = (element: HTMLElement) => {
+          // 移除已存在的手柄
+          const existingHandle = iframeDoc.querySelector(`.width-resize-handle[data-field="${selectedField}"]`);
+          if (existingHandle) {
+            existingHandle.remove();
+          }
+
+          const handle = iframeDoc.createElement('div');
+          handle.className = 'width-resize-handle';
+          handle.setAttribute('data-field', selectedField);
+          handle.style.cssText = `
+            position: absolute;
+            right: -6px;
+            top: 0;
+            bottom: 0;
+            width: 12px;
+            cursor: ew-resize;
+            z-index: 10000;
+            background-color: rgba(102, 126, 234, 0.3);
+            border-right: 3px solid #667eea;
+            pointer-events: auto;
+          `;
+          
+          // 将手柄添加到元素中
+          const currentPosition = iframeDoc.defaultView?.getComputedStyle(element).position || '';
+          if (currentPosition === 'static') {
+            element.style.position = 'relative';
+          }
+          element.appendChild(handle);
+          
+          return handle;
+        };
+
+        // 移除调整手柄
+        const removeResizeHandle = () => {
+          const handle = iframeDoc.querySelector(`.width-resize-handle[data-field="${selectedField}"]`);
+          if (handle) {
+            handle.remove();
+          }
+        };
+
+        // 应用宽度
+        const applyWidth = (element: HTMLElement, width: number) => {
+          // 确保宽度是正数
+          const newWidth = Math.max(50, width); // 最小宽度 50px
+          element.style.width = `${newWidth}px`;
+          element.style.maxWidth = `${newWidth}px`;
+          element.style.overflow = 'hidden';
+          element.style.whiteSpace = 'nowrap';
+          element.style.textOverflow = 'ellipsis';
+
+          // 保存到 editedValues
+          const widthKey = `${selectedField}_width`;
+          setEditedValues(prev => ({
+            ...prev,
+            [dataIndex]: {
+              ...prev[dataIndex],
+              [widthKey]: `${newWidth}px`,
+            }
+          }));
+        };
+
+        const handleMouseDown = (e: MouseEvent) => {
+          const target = e.target as HTMLElement;
+          if (!target || !target.classList.contains('width-resize-handle')) {
+            return;
+          }
+
+          isResizing = true;
+          resizedElement = target.parentElement as HTMLElement;
+          if (!resizedElement) return;
+
+          startX = e.clientX;
+          const computedStyle = iframeDoc.defaultView?.getComputedStyle(resizedElement);
+          startWidth = computedStyle ? parseFloat(computedStyle.width) || resizedElement.offsetWidth : resizedElement.offsetWidth;
+
+          e.preventDefault();
+          e.stopPropagation();
+        };
+
+        const handleMouseMove = (e: MouseEvent) => {
+          if (!isResizing || !resizedElement) return;
+
+          const deltaX = e.clientX - startX;
+
+          // 计算新的宽度（需要考虑 iframe 的缩放）
+          const iframeRect = targetIframe?.getBoundingClientRect();
+          const scaleX = iframeRect ? (iframeRect.width / (iframeSize?.width || 750)) : 1;
+
+          const newWidth = startWidth + (deltaX / scaleX);
+          applyWidth(resizedElement, newWidth);
+
+          e.preventDefault();
+        };
+
+        const handleMouseUp = () => {
+          if (isResizing) {
+            // 调整结束时提交快照（只在 undo ready 时记录）
+            if (undoReadyRef.current) {
+              setTimeout(() => {
+                commitSnapshot('width-resize-end');
+              }, 50);
+            }
+          }
+          isResizing = false;
+          resizedElement = null;
+        };
+
+        // 为所有文字元素添加调整手柄
+        textElements.forEach(element => {
+          // 检查是否已经有保存的宽度（使用 ref 避免依赖问题）
+          const widthKey = `${selectedField}_width`;
+          const currentEditedValues = editedValuesRef.current;
+          const savedWidth = currentEditedValues[dataIndex]?.[widthKey];
+          if (savedWidth) {
+            const widthValue = parseFloat(savedWidth);
+            if (!isNaN(widthValue)) {
+              applyWidth(element, widthValue);
+            }
+          }
+
+          // 创建调整手柄
+          const handle = createResizeHandle(element);
+          handle.addEventListener('mousedown', handleMouseDown);
+        });
+
+        // 全局鼠标移动和抬起事件，用于调整宽度
+        iframeDoc.addEventListener('mousemove', handleMouseMove);
+        iframeDoc.addEventListener('mouseup', handleMouseUp);
+
+        // 清理函数
+        return () => {
+          removeResizeHandle();
+          iframeDoc.removeEventListener('mousemove', handleMouseMove);
+          iframeDoc.removeEventListener('mouseup', handleMouseUp);
+        };
+      } catch (e) {
+        console.warn('设置宽度调整失败:', e);
+        return () => {};
+      }
+    };
+
+    // 为所有 iframe 设置事件监听器
+    const cleanupFunctions: (() => void)[] = [];
+    
+    iframesToSetup.forEach((iframe, idx) => {
+      const timer = setTimeout(() => {
+        const cleanup = setupWidthResize(iframe, idx);
+        if (cleanup) {
+          cleanupFunctions.push(cleanup);
+        }
+      }, 100);
+      
+      return () => {
+        clearTimeout(timer);
+        cleanupFunctions.forEach(cleanup => cleanup());
+      };
+    });
+
+    return () => {
+      cleanupFunctions.forEach(cleanup => cleanup());
+    };
+  }, [isPreviewMode, selectedField, currentIndex, getActiveIndex, previewIframeRef, iframeSize, commitSnapshot, setEditedValues]);
+
   // 清除 CSS
   const handleClearCss = () => {
     setCssContent("");
@@ -3131,7 +3380,7 @@ export const BannerBatchPage: React.FC = () => {
 
               {/* 编辑/预览模式切换（右侧一半） */}
               <div className="template-view-mode-section">
-                <h3>预览模式</h3>
+                <h3>{isPreviewMode ? '预览模式' : '编辑模式'}</h3>
                 <div className="view-mode-toggle">
                   <button
                     className={`view-mode-btn ${!isPreviewMode ? 'active' : ''}`}

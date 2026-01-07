@@ -572,6 +572,20 @@ export const applyJsonDataToIframe = (
       } else {
         // 非图片字段，只更新第一个元素
         allElements[0].textContent = finalValue;
+        
+        // 应用宽度（如果有）
+        const widthKey = `${fieldName}_width`;
+        const savedWidth = edits[widthKey];
+        if (savedWidth) {
+          const widthValue = parseFloat(String(savedWidth));
+          if (!isNaN(widthValue)) {
+            allElements[0].style.width = `${widthValue}px`;
+            allElements[0].style.maxWidth = `${widthValue}px`;
+            allElements[0].style.overflow = 'hidden';
+            allElements[0].style.whiteSpace = 'nowrap';
+            allElements[0].style.textOverflow = 'ellipsis';
+          }
+        }
       }
     });
     
@@ -610,6 +624,20 @@ export const applyJsonDataToIframe = (
                   el.style.transformOrigin = 'center center';
                 }
               });
+            }
+          } else if (fieldName.endsWith('_width')) {
+            // 处理宽度字段
+            const originalFieldName = fieldName.replace(/_width$/, '');
+            const targetElement = iframeDoc.querySelector(`[data-field="${originalFieldName}"]`) as HTMLElement;
+            if (targetElement && targetElement.tagName !== 'IMG') {
+              const widthValue = parseFloat(String(value));
+              if (!isNaN(widthValue)) {
+                targetElement.style.width = `${widthValue}px`;
+                targetElement.style.maxWidth = `${widthValue}px`;
+                targetElement.style.overflow = 'hidden';
+                targetElement.style.whiteSpace = 'nowrap';
+                targetElement.style.textOverflow = 'ellipsis';
+              }
             }
           } else if (element.tagName === "IMG") {
             (element as HTMLImageElement).src = String(value);

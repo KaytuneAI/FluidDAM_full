@@ -97,3 +97,6 @@ echo ""
 echo -e "${YELLOW}Note: Make sure Nginx is configured to proxy /api/ to http://127.0.0.1:3001/${NC}"
 echo ""
 
+
+
+
